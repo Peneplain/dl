@@ -1,0 +1,590 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=20mm,headheight=14pt,headsep=7mm,footskip=10mm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs,tabularx,array}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{hyperref}
+\urlstyle{same}
+
+\definecolor{accent}{HTML}{174B60}
+\definecolor{muted}{HTML}{536371}
+\hypersetup{colorlinks=true,linkcolor=accent,urlcolor=accent,citecolor=accent,
+  pdftitle={Predictive Risk-Guided Residual Control for Text-Driven Humanoid Manipulation},
+  pdfauthor={Gu Wentao; He Yutong; Lu Yinuo; Shi Yixin; Sun Yuhan; Tie Yutong; Wang Qifa; Wang Yuxiang; Xia Fangxin; Yin Siyuan; Zang Ziyi; Zhu Jianyu}}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4pt}
+\setlist[itemize]{leftmargin=1.3em,topsep=3pt,itemsep=2pt,parsep=0pt}
+\setlist[enumerate]{leftmargin=1.5em,topsep=3pt,itemsep=2pt,parsep=0pt}
+\titleformat{\section}{\large\bfseries\color{accent}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{10pt}{5pt}
+\titlespacing*{\subsection}{0pt}{7pt}{3pt}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{muted}Track 4 | Group 3}
+\fancyhead[R]{\small\color{muted}Project Proposal}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+\newcommand{\R}{\mathbb{R}}
+
+
+\newcommand{\archnode}[6]{%
+  \put(#1,#2){\color{#5}\rule{#3\unitlength}{#4\unitlength}}%
+  \put(#1,#2){\color{accent!65}\framebox(#3,#4){%
+    \color{black}\shortstack{#6}}}}
+\raggedbottom
+
+\begin{document}
+
+\thispagestyle{fancy}
+{\small\bfseries\color{accent}TRACK 4: HUMANOID-ROBOT MOTION GENERATION}\par
+\vspace{4pt}
+{\LARGE\bfseries Predictive Risk-Guided Residual Control\par
+for Text-Driven Humanoid Manipulation\par}
+\vspace{3pt}
+
+\section{Topic, Scope, and Objectives}
+We will study \textbf{text-driven tabletop block grasping with a simulated
+Unitree G1}. Under the instructor-approved scope, we will compare one frozen
+text-to-motion baseline with the same system augmented by \textbf{Predictive
+Risk + Residual Correction}, using the same frozen SONIC controller.
+All task data, evaluation, and demonstrations will come from simulation.
+
+Our research question is: \textbf{Can a learned representation of where and
+when execution problems may occur improve selective residual correction
+beyond a binary gate or a scalar risk score?} Our objectives are to:
+\begin{itemize}
+  \item Establish a reproducible ARDY--SONIC grasp-and-lift baseline in simulation.
+  \item Learn small, selective corrections while keeping ARDY and SONIC frozen.
+  \item Isolate prediction, risk structure, and loss contributions; measure grasp
+  success, response time, user corrections, and physical feasibility.
+\end{itemize}
+Residual robot control is established \cite{residual}; recent work also studies
+gated body--hand residuals with frozen nominal modules \cite{gated}.
+Our focus is a controlled study of \textbf{future-time/body-structured risk
+conditioning} for text-driven contact tasks. Supervised correction will be
+used in this project; reinforcement learning is outside the core scope.
+
+\section{Selected Model and Simulation System}
+\textbf{Model choice: ARDY-G1-RP-25FPS-Horizon8.}
+ARDY supports streaming text and sparse spatial constraints, and its project
+reports integration with SONIC \cite{ardy}. We will use the official
+implementation \cite{ardycode} and G1 checkpoint \cite{ardycheckpoint}.
+Its short chunks suit repeated correction. This selection reflects task fit;
+its grasp success and hardware throughput must be measured.
+
+\textbf{MuJoCo environment.}
+We will combine SONIC \cite{sonic} and its official simulation setup
+\cite{soniccode} with MuJoCo \cite{mujoco}, a free-base G1, table, dynamic block,
+and articulated hand. Lifting must result from frictional hand contacts.
+Standing constraints and SONIC provide lower-body stabilization without fixing
+the base. Robot/hand assets, physics step, actuator gains, and contact settings
+will be versioned and identical across comparisons. The initial task is
+single-hand grasping of one block at reachable tabletop poses.
+
+\textbf{Text grounding and execution.}
+A shared sequencer will parse reaching, directional adjustment, grasping, and
+lifting commands into phases and wrist goals. Current simulator object poses
+provide geometric grounding; the core study explicitly uses privileged state.
+The parser, constraints, and grasp logic will be documented, so language
+performance is attributed to the complete pipeline. ARDY receives text,
+pose history, and constraints; camera perception is deferred.
+
+The adapter will use SONIC's joint-based streaming interface \cite{sonicstream}:
+29 body-joint positions/velocities in the required order, body orientation,
+and aligned frame indices. We will pin one matching encoder/decoder/config
+set, initially the default release. ARDY output will be decoded, mapped, and
+resampled into nominal references $A_t$:
+\[
+\text{Text + goals}\rightarrow\text{ARDY + adapter}\rightarrow A_t
+\xrightarrow{\text{Risk + Residual}} A_t+\Delta A_t
+\rightarrow\text{SONIC}\rightarrow\text{simulated G1}.
+\]
+Residuals change arm-joint references only; velocities and dependent reference
+fields are recomputed afterward. Root, legs, and fingers receive no learned
+offsets. A shared finger controller handles closure/release and contact checks.
+All systems use identical reference limits, clearance checks, and failure stops.
+A baseline bypasses the learned modules. Recovering falls through leg
+corrections is outside this initial controller's authority.
+
+\newpage
+\section{System Architectures}
+Both architectures share the same frozen models, hand controller, and physics.
+
+\begin{figure}[!ht]
+\centering
+\setlength{\unitlength}{1mm}
+\begin{picture}(170,64)
+\linethickness{0.45pt}
+\archnode{0}{36}{33}{18}{black!3}{Text + goals\\+ pose history}
+\archnode{43}{36}{33}{18}{accent!8}{\textbf{ARDY} (frozen)\\Adapter + checks}
+\archnode{86}{36}{33}{18}{accent!8}{\textbf{SONIC} (frozen)\\Body controller}
+\archnode{129}{36}{33}{18}{accent!4}{\textbf{G1 in MuJoCo}\\Contact physics}
+\archnode{43}{9}{42}{15}{black!3}{Shared finger controller\\Grasp / release}
+\color{accent}
+\put(33,45){\vector(1,0){10}}
+\put(76,45){\vector(1,0){10}}
+\put(119,45){\vector(1,0){10}}
+\put(81,59){\makebox(0,0){\small Nominal reference}}
+\put(16.5,36){\line(0,-1){19.5}}
+\put(16.5,16.5){\vector(1,0){26.5}}
+\put(85,16.5){\line(1,0){60.5}}
+\put(145.5,16.5){\vector(0,1){19.5}}
+\put(108,20){\makebox(0,0){\small Finger commands}}
+\color{muted}
+\put(162,45){\line(1,0){6}}
+\put(168,45){\line(0,-1){43}}
+\put(168,2){\line(-1,0){160}}
+\put(8,2){\vector(0,1){34}}
+\put(121,6){\makebox(0,0){\small Simulator feedback}}
+\end{picture}
+\caption{\textbf{Baseline (B0): ARDY + SONIC.} Frozen ARDY supplies nominal
+references to SONIC. The shared task interface controls the fingers and
+consumes simulator feedback.}
+\label{fig:baseline}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\setlength{\unitlength}{1mm}
+\begin{picture}(170,124)
+\linethickness{0.45pt}
+\archnode{0}{103}{33}{16}{black!3}{Text + goals\\+ pose history}
+\archnode{43}{103}{33}{16}{accent!8}{\textbf{ARDY} (frozen)\\Motion adapter}
+\archnode{88}{103}{37}{16}{black!3}{$A+\Delta A$\\Reference checks}
+\archnode{136}{103}{30}{16}{accent!8}{\textbf{SONIC}\\Frozen}
+\archnode{0}{63}{33}{18}{black!3}{Execution history\\$S$}
+\archnode{43}{63}{33}{18}{orange!13}{\textbf{Risk model}\\$G_\phi(S,A)$}
+\archnode{136}{63}{30}{18}{accent!4}{\textbf{G1 in MuJoCo}\\Contact physics}
+\archnode{43}{22}{33}{20}{violet!7}{Structured risk\\tokens $Z$\\Gate score $p$}
+\archnode{88}{22}{37}{20}{orange!13}{\textbf{Residual model}\\$R_\theta(S,A,Z)$\\Active if $p\geq\tau$}
+\archnode{136}{22}{30}{20}{black!3}{Task phase\\Finger controller\\Shared}
+\color{accent}
+% Nominal path stays intact; it also conditions both learned modules.
+\put(33,111){\vector(1,0){10}}
+\put(76,111){\vector(1,0){12}}
+\put(125,111){\vector(1,0){11}}
+\put(151,103){\vector(0,-1){22}}
+\put(81,122){\makebox(0,0){$A$}}
+\put(82,111){\line(0,-1){59}}
+\put(82,90){\line(-1,0){22.5}}
+\put(59.5,90){\vector(0,-1){9}}
+\put(82,52){\line(1,0){16.5}}
+\put(98.5,52){\vector(0,-1){10}}
+% History enters risk and residual separately.
+\put(33,72){\vector(1,0){10}}
+\put(37,72){\line(0,-1){61}}
+\put(37,11){\line(1,0){67}}
+\put(104,11){\vector(0,1){11}}
+\put(72,14.5){\makebox(0,0){\small History context}}
+% Full risk representation is passed to the residual, not just the gate.
+\put(59.5,63){\vector(0,-1){21}}
+\put(76,32){\vector(1,0){12}}
+\put(82,37){\makebox(0,0){$Z,p$}}
+\put(118,42){\vector(0,1){61}}
+\put(109,84){\makebox(0,0){$\Delta A^{\mathrm{des}}$}}
+\put(151,42){\vector(0,1){21}}
+\put(157,52){\makebox(0,0){\small Fingers}}
+% Simulator feedback closes the learned control loop.
+\color{muted}
+\put(166,72){\line(1,0){3}}
+\put(169,72){\line(0,-1){68}}
+\put(169,4){\line(-1,0){152.5}}
+\put(16.5,4){\vector(0,1){59}}
+\put(132,8){\makebox(0,0){\small Simulator feedback}}
+\end{picture}
+\caption{\textbf{Proposed (P): ARDY + Risk + Residual + SONIC.}
+Risk uses history and future nominal motion. Structured tokens condition the
+bounded residual; low risk requests zero correction. Orange modules are trainable;
+blue modules are frozen. Reference checks smooth gate transitions; shared
+hand control and feedback match Figure~\ref{fig:baseline}.}
+\label{fig:proposed}
+\end{figure}
+
+\clearpage
+\section{Predictive Risk and Residual Learning}
+\subsection{Anticipating execution problems}
+The risk model receives 200--500\,ms of execution history and future nominal
+references, with common task-phase and planned finger-command context:
+\[
+S_t=[s_{t-K+1},\ldots,s_t],\qquad A_t=[a_t,\ldots,a_{t+H-1}],
+\qquad (Z_t,p_t)=G_\phi(S_t,A_t).
+\]
+State includes joint positions/velocities, base orientation/angular velocity,
+hand--object pose, contacts, tracking error, and task phase. Current/past
+observations are inputs; future actual execution is used only for labels.
+The hand-command context is observed but never changed by the residual.
+
+A compact Transformer (width 256, four layers, eight heads) will produce
+$Z_t\in\R^{H\times B\times D}$ with body/time positional embeddings:
+$H=8$ samples spaced 40\,ms apart, $B=4$ groups (left/right arm-hand, torso,
+lower body), and $D=32$. Body/time auxiliary heads supervise tracking error,
+phase-dependent contact loss, and instability; a pooled head gives $p_t$:
+\[
+\mathcal L_{\mathrm{risk}}=
+\lambda_e\mathcal L_{\mathrm{track}}+
+\lambda_c\mathcal L_{\mathrm{contact}}+
+\lambda_b\mathcal L_{\mathrm{balance}}+
+\lambda_i\mathcal L_{\mathrm{intervene}}.
+\]
+Intervention labels mark threshold violations during nominal future execution;
+thresholds are validated then fixed. Open-hand phases are not grasp failures.
+Losses mask unavailable future steps. High risk indicates possible failure,
+not a guarantee that an arm correction can recover it.
+
+\subsection{Bounded correction and distinct supervision}
+A temporal Transformer reads $(S_t,A_t,Z_t)$. An arm-only mask $M$ and bounds
+$\epsilon$ restrict the prediction; gating selects a desired correction:
+\[
+\widehat{\Delta A}_t=M\odot\operatorname{clip}
+\bigl(R_\theta(S_t,A_t,Z_t),-\epsilon,\epsilon\bigr),\qquad
+\Delta A_t^{\mathrm{des}}=\mathbf{1}[p_t\geq\tau]\widehat{\Delta A}_t.
+\]
+The shared reference checks apply magnitude/rate limits before execution.
+Low risk stops residual inference and requests zero; any previous offset
+ramps to zero under the same rate limit. Diagrams use $\Delta A$ for the
+applied offset after this step.
+
+Teacher recoveries supply $\Delta A_t^*=A_t^{\mathrm{expert}}-A_t$.
+Correction and identity losses use \textbf{disjoint} recoverable-perturbed and
+stable-nominal sets $\mathcal D_c$ and $\mathcal D_s$:
+\[
+\begin{aligned}
+\mathcal L_{\mathrm{res}}={}&
+\mathbb E_{\mathcal D_c}\norm{\widehat{\Delta A}_t-\Delta A_t^*}_F^2
++\alpha\mathbb E_{\mathcal D_s}\norm{\widehat{\Delta A}_t}_F^2\\
+&+\beta\mathbb E_{\mathcal D_c\cup\mathcal D_s}
+\sum_{h=0}^{H-2}\norm{\widehat{\Delta a}_{t,h+1}-\widehat{\Delta a}_{t,h}}_2^2.
+\end{aligned}
+\]
+This avoids counting stable zero targets twice. Sampling ratios and loss
+normalization are fixed across ablations; removing identity supervision now
+has a distinct meaning. Training uses bounded predictions before the gate.
+
+\subsection{Simulation data and runtime}
+An offline constrained IK teacher will propose arm-only corrections within
+the same bounds, verified through frozen SONIC and the shared hand controller
+from the \textbf{same perturbed state}. Simulated teleoperation may supplement
+recoveries. Failed recoveries supervise risk only. Nominal-label branches
+restore simulator state, controller history, reference buffers, and disturbance
+seeds; corrected outcomes never substitute for nominal counterfactual labels.
+
+Split parent episodes (including all branches) before window extraction. Train risk first,
+then residuals with \textbf{predicted} tokens and a frozen risk encoder on S4000.
+The teacher is absent at evaluation. Joint fine-tuning is deferred.
+
+SONIC targets 50\,Hz; risk/residual updates target 10--20\,Hz. A timestamped
+buffer covers both risk and SONIC lookahead; references are resampled to each
+clock. Execute only until the next update before replanning. Underruns trigger
+a shared hold and are logged. Simulation may run slower than wall time;
+25\,FPS motion sampling does not establish real-time inference.
+
+\newpage
+\section{Primary Comparison and Ablation Experiments}
+Every configuration uses the \textbf{same frozen ARDY and SONIC checkpoints},
+scene, task sequencer, hand controller, observations, and reference adapter.
+The primary comparison is \textbf{B0 versus P}; intermediate controls explain
+where any improvement comes from.
+
+\begingroup
+\small
+\renewcommand{\arraystretch}{1.13}
+\begin{tabularx}{\linewidth}{@{}p{9mm}p{45mm}Y@{}}
+\toprule
+\textbf{ID} & \textbf{Configuration} & \textbf{Purpose} \\
+\midrule
+B0 & ARDY + SONIC & Frozen baseline; no learned correction. \\
+B1 & Always-on residual & Residual receives history and nominal actions only; tests whether
+ordinary residual learning is sufficient. \\
+B2 & Reactive gate + residual & Current tracking/contact/balance thresholds
+gate the B1 residual; tests reactive intervention. \\
+I1 & Predictive gate only & Predicted risk activates a residual with no
+risk features; tests anticipation without risk conditioning. \\
+I2 & Predictive scalar + residual & Residual also receives the risk probability;
+tests a single predictive risk score. \\
+I3 & Body-wise risk + residual & Residual receives body-wise auxiliary risks;
+tests spatial localization. \\
+I4 & Body--time risk map + residual & Residual receives explicit auxiliary
+predictions over $H\times B$; tests temporal localization. \\
+P & Structured tokens + residual & Full proposed method: gated residual
+conditioned on learned $H\times B\times D$ risk features. \\
+\bottomrule
+\end{tabularx}
+\endgroup
+
+\subsection{Isolating the risk interface}
+I1--I4 and P share a frozen risk encoder and gate. B1/B2/I1 reuse one residual
+checkpoint. Identical body/time slots contain zeros (I1), repeated probability
+(I2), time-pooled body-wise auxiliary risks (I3), body/time predictions (I4),
+or learned tokens (P). Threshold-normalized auxiliary channels share feature
+width, decoder capacity, corrective data, and training budgets. We will report
+adapter/decoder parameter counts.
+
+The gate function is fixed, but closed-loop states can change activation rates.
+Compare success--intervention curves at validation-selected thresholds and
+residual errors on identical held-out windows. Structured features should
+improve success/locality at comparable intervention effort; this is a hypothesis.
+
+\subsection{Component and loss ablations}
+Each row below changes \textbf{one factor} relative to P. Other losses, correction
+bounds, data, and optimization budgets remain fixed.
+
+\begingroup
+\small
+\renewcommand{\arraystretch}{1.1}
+\begin{tabularx}{\linewidth}{@{}p{40mm}YY@{}}
+\toprule
+\textbf{Ablation} & \textbf{Controlled change} & \textbf{Question / evidence} \\
+\midrule
+Pooled learned tokens & Average body/time tokens and repeat over slots; retrain residual. &
+Does localization matter beyond a generic learned feature? \\
+No future-action input & Remove future actions from risk only; retrain risk/residual. &
+Does anticipation improve warning lead time and success? \\
+No execution history & Risk uses current state and future actions; retrain risk/residual. &
+Does temporal context expose delay and drift? \\
+No auxiliary risk losses & Train risk with intervention loss only; retrain residual. &
+Do execution-related heads make tokens useful? \\
+No selective gate & Force the trained P gate on; keep both networks fixed. &
+Does selection reduce unnecessary corrections? \\
+No identity loss & Retrain residual with $\alpha=0$. &
+Does removing stable-state supervision increase unnecessary correction? \\
+No smoothness loss & Retrain residual with $\beta=0$. &
+Do reference jitter, contacts, or grasp stability worsen? \\
+\bottomrule
+\end{tabularx}
+\endgroup
+
+Hard bounds remain; compare raw and applied offsets because limiting can mask
+loss effects. Prioritize B0/B1/I2/P and report any unfinished ablations.
+
+\newpage
+\section{Evaluation Protocol and Analysis}
+\textbf{Prioritized test suite.}
+Core conditions are nominal execution, grasp-target bias, and action latency.
+The instruction set covers reaching, adjustment, grasping, lifting, paraphrases,
+and left/right targets. Fixed pilot-calibrated perturbation levels will be
+published before testing. Mass, friction, pushes, and held-out combinations
+form a secondary stress suite after core comparisons are complete. Prompt
+paraphrases and scene seeds are separated from training where applicable.
+
+\textbf{Success and trial budget.}
+The instructed block's lowest point must clear the tabletop by 5\,cm and remain
+held for 2\,s within 30\,s of simulated time, without a fall or prohibited
+collision. Fall/clearance thresholds will be fixed in the evaluation config.
+We plan \textbf{20 paired episodes per core condition per configuration}.
+Match instructions, initial states, perturbations, and ARDY random seeds;
+closed-loop nominal motions may subsequently diverge. B1, I2, and P target
+three training seeds; other ablations start with one and are exploratory.
+The full plan on core conditions is approximately 1,260 episodes (10.5 simulated
+hours at the timeout limit), before secondary stress tests or runtime overhead.
+
+\textbf{Metrics and uncertainty.}
+Report success with Wilson 95\% intervals, paired success differences with
+an episode-level bootstrap, and results per training seed. Overlapping windows
+are not independent trials. Also report command-to-first-motion/completion
+time, wrist error, slips/falls/collisions, intervention rate, correction norm,
+locality, and smoothness. Risk metrics include precision--recall, false alarms,
+and warning lead time on held-out nominal rollouts, avoiding successful
+interventions being relabeled as false alarms. Latency includes text encoding,
+generation, communication, risk, and residual inference (median/p95).
+Simulated task time, wall-clock response, and simulation speed are separate.
+
+Autonomous trials receive no extra user corrections. An interactive subset
+allows at most two corrections under a fixed rule, excluding planned phase
+commands from the count. Failed trials and timeouts remain in the denominator;
+completion times are reported alongside success. Videos will cover language,
+pose, contact, balance, intervention, and buffering failures.
+
+\section{Milestones and Expected Deliverables}
+Project period: \textbf{29 September--15 October 2026}.
+Integration, data tooling, and model development will run in parallel.
+
+\begingroup
+\small
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\linewidth}{@{}p{30mm}Y@{}}
+\toprule
+\textbf{Period} & \textbf{Milestone and acceptance evidence} \\
+\midrule
+Sep 29--30 & Verify model access and S4000 operators; launch G1/SONIC
+in MuJoCo. Build data and evaluation tools in parallel. \\
+Oct 1--3 & Integrate ARDY, constraints, and hand control; freeze the
+baseline after a verified contact grasp/lift. Validate teacher recovery targets. \\
+Oct 4--7 & Expand perturbation/correction data; train risk and residual
+models. Validate selective closed-loop correction. \\
+Oct 8--11 & Complete B0/B1/I2/P first; then expand interfaces and
+component ablations. Freeze the completed result set and failures. \\
+Oct 12--14 & Freeze results; complete report, slides, repository, and
+videos. Reproduce key runs and rehearse the presentation. \\
+Oct 15 & Final consistency checks and submission of all required
+deliverables by the course deadline. \\
+\bottomrule
+\end{tabularx}
+\endgroup
+
+By Sep.~30, verify S4000 training operators, text-encoder access, and a working
+SONIC inference backend \cite{ardycode}, \cite{soniccode}. TensorRT compatibility
+is not assumed; confirm any separate compatible inference host is available.
+If integration slips, reduce scene variation before expanding experiments.
+No throughput or successful grasp is claimed before these checks.
+
+Deliverables: the simulation system, checkpoints, ablation results, and a
+public GitHub repository with setup/data/training/evaluation scripts; a
+5--8-page report (excluding references); and a 10-minute presentation with
+5-minute Q\&A. Videos show commands and successful/failed trials for both systems.
+
+\newpage
+\section{Future Directions: VLA Policies in Simulation}
+After the ARDY study, we propose testing \textbf{GR00T N1.7} \cite{groot} and
+\textbf{$\pi_{0.5}$} \cite{openpi} with the same risk-guided residual principle,
+using rendered images, language, and robot state. GR00T documents a G1--SONIC
+latent-action interface; $\pi_{0.5}$ would require G1-specific adaptation.
+Each future baseline must first be validated and then frozen. Risk/residual
+modules would be trained on that policy's simulated rollouts and evaluated
+with and without correction under matched perturbations. Correction coordinates
+and bounds must suit the action interface; adding offsets to latent tokens
+is not automatically equivalent to correcting joint references. This is future
+work, and zero-shot weight transfer would be a separate experiment.
+
+\section{Team Roles and Responsibilities}
+Each member owns a technical component and contributes its methods, evidence,
+and limitations to the report and presentation.
+
+\begingroup
+\small
+\renewcommand{\arraystretch}{1.1}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{26mm}>{\raggedright\arraybackslash}p{35mm}Y@{}}
+\toprule
+\textbf{Member} & \textbf{Primary role} & \textbf{Responsibilities} \\
+\midrule
+Gu Wentao & Architecture, experiments, and training lead &
+Design the framework and experiments/ablations; coordinate module interfaces;
+lead S4000 training, tuning, and checkpoints. \\
+\addlinespace[2pt]
+He Yutong & ARDY integration &
+Integrate text encoding, pose/constraint inputs, and streaming inference;
+validate the selected checkpoint. \\
+\addlinespace[2pt]
+Lu Yinuo & SONIC and adaptation &
+Implement joint/frame mapping, resampling, and reference updates;
+validate lower-body tracking and balance. \\
+\addlinespace[2pt]
+Shi Yixin & Simulation environment &
+Build the MuJoCo G1/table/block scene, contact physics, cameras,
+and reproducible resets. \\
+\addlinespace[2pt]
+Sun Yuhan & Predictive risk model &
+Implement history encoding, auxiliary heads, structured risk tokens,
+and prediction validation. \\
+\addlinespace[2pt]
+Tie Yutong & Residual correction &
+Implement risk-conditioned residuals, correction bounds,
+identity/smoothness losses, and model ablations. \\
+\addlinespace[2pt]
+Wang Qifa & Data engineering &
+Build synchronized episode recording, loaders, normalization,
+split audits, and optional LeRobot export. \\
+\addlinespace[2pt]
+Wang Yuxiang & Perturbations, labels, and mathematical reasoning  &
+Generate perturbations, nominal snapshot rollouts, risk labels,
+and validated corrective targets; analyze mathematical assumptions. \\
+\addlinespace[2pt]
+Xia Fangxin & Language grounding and goals &
+Build the task sequencer, instruction suite, wrist/standing constraints,
+and IK teacher interface. \\
+\addlinespace[2pt]
+Yin Siyuan & Evaluation and statistics &
+Run paired trials and ablation comparisons; analyze uncertainty,
+intervention trade-offs, and failure categories. \\
+\addlinespace[2pt]
+Zang Ziyi & Simulated hand interaction &
+Implement finger actuation, contact checks, grasp/lift verification,
+and hand-model validation. \\
+\addlinespace[2pt]
+Zhu Jianyu & Runtime and reproducibility &
+Implement buffering, timing, launch scripts, video recording,
+and the reproducible release. \\
+\bottomrule
+\end{tabularx}
+\endgroup
+
+{\small External code, models, and datasets will be acknowledged. LLM assistance
+was used to draft this proposal; the team will review it under the course policy.\par}
+
+\clearpage
+\begingroup
+\small
+\raggedright
+\setlength{\parskip}{1pt}
+\begin{thebibliography}{11}
+\setlength{\itemsep}{7pt}
+\bibitem{residual}
+T. Johannink et al., ``Residual reinforcement learning for robot
+control,'' in Proc. IEEE Int. Conf. Robot. Autom. (ICRA), Montreal,
+QC, Canada, 2019, pp. 6023--6029, doi:
+\href{https://doi.org/10.1109/ICRA.2019.8794127}{10.1109/ICRA.2019.8794127}.
+
+\bibitem{gated}
+R. Wu, S. Li, L. Zhang, A. Knoll, and Z. Chen, ``Gated residual body-hand
+coordination for whole-body humanoid teleoperation,'' 2026,
+arXiv:2609.18763. [Online]. Available: \url{https://arxiv.org/abs/2609.18763}
+
+\bibitem{ardy}
+K. Zhao, M. Petrovich, H. Zhang, T. Wang, S. Tang, and D. Rempe,
+``ARDY: Autoregressive diffusion with hybrid representation for interactive
+human motion generation,'' ACM Trans. Graph., vol. 45, no. 4,
+2026, Art. no. 86, doi:
+\href{https://doi.org/10.1145/3811284}{10.1145/3811284}.
+
+\bibitem{ardycode}
+NVIDIA. ``ARDY.'' GitHub. Accessed: Sep. 28, 2026. [Online]. Available:
+\url{https://github.com/nv-tlabs/ardy}
+
+\bibitem{ardycheckpoint}
+NVIDIA. ``ARDY-G1-RP-25FPS-Horizon8.'' Hugging Face.
+Accessed: Sep. 28, 2026. [Online]. Available:
+\url{https://huggingface.co/nvidia/ARDY-G1-RP-25FPS-Horizon8}
+
+\bibitem{sonic}
+Z. Luo et al., ``SONIC: Supersizing motion tracking for natural
+humanoid whole-body control,'' Sci. Robot., vol. 11, no. 117,
+2026, Art. no. eaed4592, doi:
+\href{https://doi.org/10.1126/scirobotics.aed4592}{10.1126/scirobotics.aed4592}.
+
+\bibitem{soniccode}
+NVIDIA. ``GR00T-WholeBodyControl.'' GitHub.
+Accessed: Sep. 28, 2026. [Online]. Available:
+\url{https://github.com/NVlabs/GR00T-WholeBodyControl}
+
+\bibitem{mujoco}
+E. Todorov, T. Erez, and Y. Tassa, ``MuJoCo: A physics engine for model-based
+control,'' in Proc. IEEE/RSJ Int. Conf. Intell. Robots Syst. (IROS),
+Vilamoura, Portugal, 2012, pp. 5026--5033, doi:
+\href{https://doi.org/10.1109/IROS.2012.6386109}{10.1109/IROS.2012.6386109}.
+
+\bibitem{sonicstream}
+NVIDIA. ``Streaming motion tracking.'' GR00T-WholeBodyControl
+Documentation. Accessed: Sep. 28, 2026. [Online]. Available:
+\url{https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/zmq.html}
+
+\bibitem{groot}
+NVIDIA. ``Isaac-GR00T N1.7.'' GitHub.
+Accessed: Sep. 28, 2026. [Online]. Available:
+\url{https://github.com/NVIDIA/Isaac-GR00T}
+
+\bibitem{openpi}
+Physical Intelligence. ``OpenPI.'' GitHub.
+Accessed: Sep. 28, 2026. [Online]. Available:
+\url{https://github.com/Physical-Intelligence/openpi}
+\end{thebibliography}
+\endgroup
+\end{document}
