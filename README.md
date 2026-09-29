@@ -92,15 +92,49 @@ Low risk skips residual inference and requests zero offset; a shared rate limite
 ramps any previously applied offset back to zero. Root, legs and fingers receive
 no learned offsets. SONIC provides whole-body tracking and lower-body stabilization.
 
+## Quick start: S4000/MUSA Docker
+
+The supported accelerator environment uses the vendor S4000 image
+`registry.mthreads.com/mcconline/musa-pytorch-release-public:rc5.1.0-v2.9.1-S4000-py310`.
+It supplies the matched `torch`/`torch_musa` pair; do not install a generic
+PyTorch or CUDA wheel over it. The host must have the MUSA container toolkit
+registered with Docker. On a host where the toolkit package is already
+installed, run once as an administrator:
+
+```bash
+sudo /usr/bin/musa/docker setup /usr/bin/musa
+sudo systemctl restart docker
+```
+
+Build the project image and enter the project container:
+
+```bash
+docker build -f Dockerfile.musa -t dl-musa:latest .
+./docker/run-musa.sh bash
+```
+
+Verify the accelerator inside the container:
+
+```bash
+./docker/run-musa.sh python -c \
+  'import torch, torch_musa; print(torch.__version__, torch_musa.__version__); \
+   print(torch.musa.is_available()); print(torch.tensor([1., 2.], device="musa") + 1)'
+```
+
+Use `MTHREADS_VISIBLE_DEVICES=0 ./docker/run-musa.sh bash` to select one S4000.
+The current repository commit contains the project specification but not yet
+the `risk_residual/`, `tests/`, or `scripts/` implementation directories.
+
 ## Quick start: CPU pipeline
 
 Python 3.10+ is required. The first milestone was verified with Python 3.11,
 PyTorch 2.5.0 and NumPy 1.26.4 on CPU. Run from the repository root:
 
 ```bash
-python3 -m venv .venv
+# `virtualenv` is used here because some cluster images omit python3-venv.
+python3 -m virtualenv .venv
 source .venv/bin/activate
-python -m pip install -e .
+python -m pip install -r requirements-cpu.txt
 python -m unittest discover -s tests -v
 python scripts/check_backend.py --device cpu --config configs/default.yaml
 python scripts/smoke.py --out artifacts/smoke

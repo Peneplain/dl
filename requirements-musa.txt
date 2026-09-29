@@ -1,0 +1,7 @@
+# Dependencies added on top of the vendor S4000 image.
+# The image supplies the matched torch/torch_musa pair; do not install a
+# generic PyTorch or CUDA wheel over it.
+numpy==1.26.4
+PyYAML==6.0.2
+scipy==1.14.1
+mujoco==3.2.7

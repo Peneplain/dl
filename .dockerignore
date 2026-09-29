@@ -1,0 +1,13 @@
+.git
+.venv
+.venv-musa
+__pycache__
+artifacts
+checkpoints
+datasets
+third_party
+wandb
+*.pt
+*.pth
+*.onnx
+*.engine

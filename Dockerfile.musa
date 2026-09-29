@@ -1,0 +1,16 @@
+# The host driver is MUSA 4.3.x (MTT S4000). Keep the vendor torch/torch_musa
+# pair from this image together; replacing either package breaks device ABI.
+ARG MUSA_BASE_IMAGE=registry.mthreads.com/mcconline/musa-pytorch-release-public:rc5.1.0-v2.9.1-S4000-py310
+FROM ${MUSA_BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    MUSA_HOME=/usr/local/musa \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /workspace/dl
+COPY requirements-musa.txt /tmp/requirements-musa.txt
+RUN python -m pip install --no-cache-dir -r /tmp/requirements-musa.txt
+
+ENTRYPOINT []
+CMD ["/bin/bash"]
