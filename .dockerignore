@@ -12,3 +12,11 @@ wandb
 *.pth
 *.onnx
 *.engine
+*.safetensors
+*.bundle
+*.bundle.sha256
+sonic-offline-*.tar.gz
+sonic-offline-*.tar.gz.sha256
+.cache
+.env
+.env.*

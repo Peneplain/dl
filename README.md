@@ -24,26 +24,30 @@ resampled into nominal references: 29 body-joint positions and velocities,
 body orientation and aligned frame indices. The study uses privileged simulator
 state for grounding; camera perception is deferred.
 
-### Baseline architecture
+Blue blocks contain frozen models, orange blocks are the learned Risk and
+Residual models, and green is the simulator. Solid arrows carry references,
+model features or control commands; dashed arrows carry execution history.
+Both learned models also receive task-phase and planned hand-command context.
+Shared feedback for grounding, ARDY pose history, SONIC robot
+observations and feasibility checks is omitted to keep the diagrams readable.
+
+### Baseline (B0)
 
 ```mermaid
 flowchart TB
-    T["Language command"] --> Q["Shared task sequencer"]
-    Q -->|Text and pose constraints| A["Frozen ARDY<br/>G1-RP-25FPS-Horizon8"]
-    A --> N["Reference adapter<br/>Nominal reference A"]
-    N --> C["Shared reference checks<br/>Limits, clearance and field updates"]
+    Q["Language + task sequencer"] -->|Text + constraints| A["Frozen ARDY<br/>Reference adapter + buffer"]
+    A -->|Nominal reference| C["Shared reference checks"]
     C --> S["Frozen SONIC"]
-    S -->|Body control| G["Free-base G1 in MuJoCo<br/>Table, dynamic block and articulated hand"]
-    Q -->|Task phase| H["Shared finger controller"]
-    H -->|Finger commands| G
-    G -->|Object poses and task feedback| Q
-    G -->|Pose history| A
-    G -->|Contact feedback| H
-    G -->|Robot observations| S
-    G -->|State for feasibility checks| C
+    S -->|Body control| G["G1 in MuJoCo<br/>Free base · Dynamic block · Articulated hand"]
+    Q --> H["Shared finger controller"]
+    H -->|Hand control| G
 
-    classDef frozen fill:#e6f1f7,stroke:#174b60;
+    classDef shared fill:#f1f5f9,stroke:#94a3b8,color:#0f172a;
+    classDef frozen fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a;
+    classDef sim fill:#dcfce7,stroke:#22c55e,color:#14532d;
+    class Q,C,H shared;
     class A,S frozen;
+    class G sim;
 ```
 
 B0 sends the nominal reference directly through the shared checks to SONIC.
@@ -52,40 +56,38 @@ closure, release and contact checks separately from body tracking. G1's root
 remains free, and lifting must result from frictional hand contacts with a
 dynamic block.
 
-### Architecture with risk-guided residual correction
+### Proposed (P): risk-guided correction
 
 ```mermaid
 flowchart TB
-    T["Language command"] --> Q["Same task sequencer"]
-    Q -->|Text and pose constraints| A["Same frozen ARDY<br/>and reference adapter"]
-    A --> N["Nominal reference A"]
-    N -->|Future nominal motion| R["Risk model G(S, A)"]
-    O["Execution history S<br/>with task and hand context"] --> R
-    Q -->|Task phase and planned finger commands| O
-    R -->|Structured tokens Z| D["Gated residual R(S, A, Z)<br/>Run only when p >= tau"]
-    R -->|Gate score p| D
-    O --> D
-    N --> D
-    D --> M["Arm mask and bounds<br/>Zero offset request when inactive"]
-    M --> X["Add requested arm offsets"]
-    N --> X
-    X --> C["Same reference checks<br/>Limits, clearance and field updates"]
-    C --> S["Same frozen SONIC"]
-    S -->|Body control| G["Same free-base G1<br/>and MuJoCo scene"]
-    Q -->|Task phase| H["Same finger controller"]
-    H -->|Finger commands| G
-    G -->|State, contacts and tracking feedback| O
-    G -->|Object poses and task feedback| Q
-    G -->|Pose history| A
-    G -->|Contact feedback| H
-    G -->|Robot observations| S
-    G -->|State for feasibility checks| C
+    Q["Language + task sequencer"] -->|Text + constraints| A["Frozen ARDY<br/>Reference adapter + buffer"]
+    A -->|Future reference A| R["Risk model<br/>G(S, A)"]
+    R -->|"p >= tau: risk tokens Z + score p"| D["Residual model<br/>R(S, A, Z) · Gated by p"]
+    A -->|A| D
+    D -->|A + bounded arm offsets ΔA| C["Shared reference checks"]
+    R -->|"p < tau: skip Residual<br/>Use A + zero-offset request"| C
+    C --> S["Frozen SONIC"]
+    S -->|Body control| G["G1 in MuJoCo<br/>Free base · Dynamic block · Articulated hand"]
+    Q --> H["Shared finger controller"]
+    H -->|Hand control| G
 
-    classDef frozen fill:#e6f1f7,stroke:#174b60;
-    classDef learned fill:#fff0d9,stroke:#996019;
+    G -.->|History S| R
+    G -.->|History S| D
+
+    classDef shared fill:#f1f5f9,stroke:#94a3b8,color:#0f172a;
+    classDef frozen fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a;
+    classDef learned fill:#ffedd5,stroke:#f97316,color:#7c2d12;
+    classDef sim fill:#dcfce7,stroke:#22c55e,color:#14532d;
+    class Q,C,H shared;
     class A,S frozen;
     class R,D learned;
+    class G sim;
 ```
+
+The Residual block includes arm masking, bounds and addition to the nominal
+reference; rate limits and reference validation remain in the shared checks.
+The low-risk branch selects the nominal reference with a zero-offset request;
+it still passes through the shared checks and their rate limit.
 
 The risk model reads 200–500 ms of execution history and future nominal motion,
 with task-phase and planned finger-command context. It predicts structured
@@ -139,7 +141,8 @@ to be connected. Risk/Residual learning is planned; no physical grasping
 results are reported. See [verification.md](docs/verification.md) for the checks
 that have actually been run and their limits.
 
-The baseline package is independently runnable. Learned corrections, training
+The baseline setup and inference scripts run independently of learning code;
+the end-to-end B0 executor is not yet implemented. Learned corrections, training
 and data tooling belong in separate modules that can reuse the baseline;
 `baseline/` must not depend on them.
 
@@ -210,12 +213,20 @@ scripts/            Baseline installation, downloads, inference and checks
 docker/             MUSA container launcher
 tests/              Baseline provenance and packaging checks
 docs/               Baseline setup, integration, verification and project proposal
+checkpoints/baseline/ Local frozen model files and manifests (ignored)
+third_party/        Pinned upstream source checkouts (ignored)
+artifacts/          Verification outputs and offline transfer packages (ignored)
 ```
 
 Weights, datasets, environments, upstream checkouts and generated artifacts are
 excluded from Git. `scripts/package_baseline.py` uses a baseline file allowlist
 for source archives, so adding an experimental training script does not add it
 to the baseline upload.
+
+Keep offline transfer archives in `artifacts/imports/`. Keep the Llama backbone
+in `checkpoints/baseline/llama_base/`, with its download metadata intact. The
+[local audit](docs/verification.md#september-30-s4000-completeness-audit) lists
+verified assets, missing setup components and the remaining B0 implementation.
 
 ## Physical acceptance target
 

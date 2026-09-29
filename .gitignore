@@ -16,6 +16,12 @@ wandb/
 *.safetensors
 *.onnx
 *.engine
+# Local model caches and offline transfer packages.
+.cache/
+*.bundle
+*.bundle.sha256
+/sonic-offline-*.tar.gz
+/sonic-offline-*.tar.gz.sha256
 .env
 .env.*
 !.env.example

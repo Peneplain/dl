@@ -34,10 +34,39 @@ records dependencies in `artifacts/baseline-install-*`. Its backend check tests
 inference primitives without importing any learning modules; ARDY and SONIC
 are checked separately below.
 
+It installs both `requirements-musa.txt` (including MuJoCo) and
+`requirements-baseline.txt`, so setup also covers the unmodified vendor image.
+
 Source and model revisions are pinned in `configs/baseline.lock.json`. Downloads
 go to `third_party/` and `checkpoints/baseline/`, both excluded from Git. The
 Hugging Face client uses an existing login or `HF_TOKEN` when authentication is
 needed.
+
+Use the following local layout; none of these directories belongs in Git or
+the baseline source archive:
+
+```text
+checkpoints/baseline/
+  ardy/ARDY-G1-RP-25FPS-Horizon8/
+  sonic/                   Matching encoder, decoder and observation config
+  llama_base/              Full Meta Llama backbone
+  text_base/               MNTP adapter, model config and tokenizer
+  text_adapter/            Supervised adapter
+  <asset-key>.manifest.json
+third_party/
+  ardy/                    Clean checkout at the locked commit
+  sonic/                   Clean checkout at the locked commit
+artifacts/
+  imports/                 Offline archives, Git bundles and checksum sidecars
+  <fresh-run>/             Check reports and generated references
+```
+
+An offline SONIC **weights** archive does not provide the SONIC source checkout.
+Use `python scripts/fetch_baseline.py --only sources` to fetch both pinned
+sources, or import a source Git bundle at the locked commit. Keep archives and
+their checksum sidecars together in `artifacts/imports/`; check them there with
+`sha256sum -c <archive-name>.sha256`. Preserve backups until they are no longer
+needed. Do not move a model directory while a downloader is writing to it.
 
 ## Check SONIC on CPU
 

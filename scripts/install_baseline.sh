@@ -24,7 +24,8 @@ Path(sys.argv[1]).write_text("\n".join(pins) + "\n")
 print("Preserving installed vendor packages:", ", ".join(pins))
 PY
 # Dependency conflicts fail resolution instead of replacing a pinned vendor package.
-python -m pip install -c "$run_dir/vendor-constraints.txt" -r requirements-baseline.txt \
+python -m pip install -c "$run_dir/vendor-constraints.txt" \
+  -r requirements-musa.txt -r requirements-baseline.txt \
   2>&1 | tee "$run_dir/install.log"
 python - "$run_dir/vendor-constraints.txt" <<'PY'
 import importlib.metadata as metadata

@@ -76,3 +76,123 @@ environment. `check_baseline.py --device cpu` correctly reports these missing
 components and exits nonzero. It verifies both upstream sources and the other
 four model manifests successfully. The S4000 Dockerfile installs MuJoCo;
 the complete ARDY text path must be tested there after the Llama download.
+
+
+## September 30 S4000 completeness audit
+
+This audit ran in the existing `dl-musa:latest` container with the mounted
+`.venv-baseline-musa` environment: Linux x86_64, Python 3.10.12, vendor
+PyTorch 2.9.1 / torch_musa 2.9.1+a18d871, MuJoCo 3.2.7, Transformers 5.8.1,
+PEFT 0.19.1 and ONNX Runtime 1.23.2. No dependency was installed or replaced.
+The fresh output directory is `artifacts/baseline-audit-20260930-010307/`.
+`commands.json`, `cleanup-commands.json`, numbered logs and `environment.json`
+record commands, exit codes and installed versions. Model reports and the
+existing asset manifests record model/config hashes.
+
+### Local installation and frozen assets
+
+| Component | Observed status |
+| --- | --- |
+| Vendor MUSA stack and baseline Python dependencies | Imports passed; MUSA device available; MuJoCo installed |
+| ARDY source | Clean checkout at `693f74d13b3d04a0a22ce127ee79c929dd89756b` |
+| ARDY Horizon8 weights, tokenizer and statistics | Complete layout and manifest hashes passed |
+| SONIC default encoder, decoder and observation config | Complete matching release and manifest hashes passed |
+| MNTP adapter/tokenizer and supervised LLM2Vec adapter | Both complete layouts and manifest hashes passed |
+| Full Meta Llama 3 8B Instruct backbone | Not present at the canonical path during the audit; download reported in progress by the user |
+| SONIC source | `third_party/sonic/` missing; the local SONIC archive contains weights only |
+
+`python scripts/check_baseline.py --device musa` exited 1 with exactly two
+failed checks: SONIC source and Llama backbone manifest. The ARDY inference
+entry point was also invoked with a two-second standing prompt, seed 0, MUSA
+motion device and CPU text device. It stopped at `preflight` for the missing
+`llama_base.manifest.json`; `ardy/report.json` preserves that failure. No full
+8B text inference or ARDY MUSA motion inference was established by this audit.
+
+After the Llama download finishes in `checkpoints/baseline/llama_base/`, run
+these commands inside the activated container environment:
+
+```bash
+python scripts/fetch_baseline.py --only llama --offline
+python scripts/fetch_baseline.py --only sources
+python scripts/check_baseline.py --device musa
+```
+
+Registration requires revision `8afb486c1db24fe5011ec46dfbe5b5dccdb575c2`, all
+indexed shards and their original Hugging Face metadata. If revision or metadata
+checks fail, resume with `python scripts/fetch_baseline.py --only llama` against
+the locked revision. Then run the actual ARDY command in [baseline.md](baseline.md)
+with a fresh output directory. Source download requires network access; no
+SONIC source download was attempted in this audit.
+
+### Checks completed
+
+- All 15 unit tests passed, including tiny offline text-model/adapter loading,
+  bidirectional attention, download integrity, packaging boundaries and timing.
+- MUSA linear, layer-normalization and scaled-dot-product-attention primitives
+  passed. The backend emitted its float32 SDPA dtype warning; this is not a
+  full-model compatibility result.
+- The real SONIC encoder and decoder passed independent CPU ONNX probes with
+  synthetic zero inputs and finite outputs. Four threads, three warm-ups and
+  20 repetitions were used; p50/p95 were approximately 0.652/0.670 ms for the
+  encoder and 0.462/0.469 ms for the decoder. Graphs were not connected to physics.
+- The reference smoke passed with 9 synthetic source frames converted to
+  17 reference frames at 50 Hz. This is packet/reference evidence only.
+- The installer's combined MUSA and baseline requirements passed an offline
+  `pip install --dry-run --no-index` using the existing vendor constraints.
+  This verifies resolution in the installed environment, not a fresh install.
+- Shell syntax checks passed. The baseline packager produced a 35-file source
+  archive using its unchanged allowlist; local weights and transfer packages
+  remain outside its scope.
+
+### Repository cleanup
+
+The ARDY source bundle and SONIC weights archive, together with both SHA256
+sidecars, were moved from the repository root to `artifacts/imports/`.
+Checksums matched before and after moving; `relocations.json` records both
+paths and hashes. Existing model directories, upstream checkouts and backups
+were retained. Llama downloads were not moved or restarted.
+
+Git and Docker ignore rules now cover local caches and these transfer packages;
+Docker also excludes safetensors and environment-secret files. The installer
+now includes `requirements-musa.txt`, ensuring that MuJoCo is requested when
+using the original vendor image as well as the project image. Vendor package
+constraints remain in effect. Repository documentation and scripts use English.
+
+### B0 implementation still required
+
+Downloading the remaining assets does not complete the proposal's B0 executor.
+The following shared components are still missing or not connected:
+
+| Component | Remaining work |
+| --- | --- |
+| SONIC observation/action adapter | Match the pinned observation config, history, lookahead, frames, joint order and action scaling; connect encoder and decoder |
+| MuJoCo body-control loop | Free-root G1, actuator mapping, default pose, gains, physics stepping and reproducible reset |
+| Tabletop scene and hand controller | Versioned table/dynamic block/articulated-finger assets, frictional contacts, closure/release and phase-dependent contact checks |
+| Task sequencer and online ARDY history | Simulator-state grounding, wrist/standing constraints, phase transitions and executed pose history for replanning |
+| Shared reference checks | Joint/rate bounds, clearance/collision checks, dependent-field updates and common failure stops |
+| Live scheduling and underrun handling | Connect the existing timestamped buffer to the 50 Hz consumer, derive SONIC lookahead from its config, and implement logged hold behavior |
+| Episode logging and evaluation | Paired seeds/prompts/resets, trajectories/videos, model/scene provenance, timing, failures/timeouts, 5 cm / 2 s / 30 s success rule and episode-level statistics |
+
+Validate these in order: free-base standing, known-reference tracking, ARDY
+standing/arm motion, then contact grasp-and-lift. No physical trial was run in
+this audit. Risk/Residual models, training and rollout/teacher data tooling are
+separate planned components; their absence does not prevent B0 model checks.
+
+### README architecture diagrams
+
+The proposed diagram retains B0's six modules and adds only separate Risk and
+Residual blocks. Explicit edges show nominal references `A`, execution history
+`S`, risk tokens `Z`, gate score `p` and the corrected reference `A + delta A`.
+Masking, bounds and nominal-reference addition are grouped with Residual;
+shared checks still apply the common rate limits and validation. The separate
+finger-control path is preserved. The Risk output branches explicitly:
+`p >= tau` enables Residual with `Z` and `p`; `p < tau` skips Residual and
+selects nominal `A` with a zero-offset request for the shared checks. Any
+existing offset still ramps to zero under the shared rate limit. Task/hand
+context and the other shared feedback paths are explained in the text.
+
+Both Mermaid diagrams were rendered to PNG with Mermaid Ink and visually
+inspected. Edge ordering was adjusted to place Risk and Residual before SONIC
+in the displayed flow. The diagrams and data flow were checked against the
+proposal; `git diff --check` passed. This documentation-only change required no
+model or simulation runs.
