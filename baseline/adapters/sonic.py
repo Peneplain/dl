@@ -56,9 +56,9 @@ class JointStreamEncoder:
 
     def encode(self, reference, **kwargs):
         n = len(reference.times)
-        if not np.allclose(np.diff(reference.times), 0.02, atol=1e-6):
+        if not np.allclose(np.diff(reference.times), 0.02, atol=1e-6, rtol=0):
             raise ValueError("SONIC packet reference must first be resampled to 50 Hz")
-        if self.next_time is not None and not np.isclose(reference.times[0], self.next_time, atol=1e-6):
+        if self.next_time is not None and not np.isclose(reference.times[0], self.next_time, atol=1e-6, rtol=0):
             raise ValueError("Append-only encoder requires contiguous non-overlapping chunks")
         packet = pack_joint_reference(reference.joint_pos, reference.velocities(),
                                       reference.body_quat, np.arange(self.next_frame, self.next_frame + n),

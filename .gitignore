@@ -13,6 +13,7 @@ third_party/
 wandb/
 *.pt
 *.pth
+*.safetensors
 *.onnx
 *.engine
 .env

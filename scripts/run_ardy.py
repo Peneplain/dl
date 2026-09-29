@@ -42,11 +42,16 @@ def generate(args, report):
     from baseline.adapters.joints import ISAACLAB_JOINT_NAMES
     from baseline.adapters.reference import ReferenceSequence
     from baseline.adapters.sonic import JointStreamEncoder
+    from baseline.text_encoder import LocalTextEncoder, check_transformers_version
 
+    report["stage"] = "preflight"
+    device = device_for(args.device)
+    text_device = device_for(args.text_device)
+    check_transformers_version()
     lock = json.loads(LOCK.read_text())
     report["upstream_commit"] = checked_checkout(args.ardy_repo, lock["ardy"]["commit"])
     report["assets"] = {key: verify_assets(args.assets, key)
-                        for key in ("ardy", "text_base", "text_adapter")}
+                        for key in ("ardy", "llama_base", "text_base", "text_adapter")}
     report["lock_sha256"] = sha256(LOCK)
     sys.path.insert(0, str(args.ardy_repo.resolve()))
     # Local snapshots only. Never silently fetch a different model during inference.
@@ -54,13 +59,11 @@ def generate(args, report):
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
     os.environ["TEXT_ENCODER_DEVICE"] = args.text_device
     os.environ.pop("TEXT_ENCODERS_DIR", None)
-    from ardy.model import LLM2VecEncoder, load_model
+    from ardy.model import load_model
     from ardy.exports.mujoco import MujocoQposConverter
     from ardy.motion_rep.tools import length_to_mask
     from ardy.tools import to_numpy
 
-    device = device_for(args.device)
-    text_device = device_for(args.text_device)
     torch.set_num_threads(args.threads)
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -74,13 +77,13 @@ def generate(args, report):
         report["torch_musa"] = str(torch_musa.__version__)
 
     start = time.perf_counter()
+    report["stage"] = "text_load"
     print("Loading frozen local LLM2Vec encoder...", flush=True)
-    encoder = LLM2VecEncoder(str(args.assets.resolve() / "text_base"),
-                            str(args.assets.resolve() / "text_adapter"),
-                            dtype=args.text_dtype, llm_dim=4096, device=str(text_device))
+    encoder = LocalTextEncoder(args.assets, dtype=args.text_dtype, device=str(text_device))
     synchronize(text_device)
     report["text_load_seconds"] = time.perf_counter() - start
     start = time.perf_counter()
+    report["stage"] = "text_encode"
     with torch.no_grad():
         features, lengths = encoder([args.prompt])
         features = features.detach().to(device="cpu", dtype=torch.float32)
@@ -95,6 +98,7 @@ def generate(args, report):
     if text_device.type == "musa":
         torch.musa.empty_cache()
     start = time.perf_counter()
+    report["stage"] = "motion_load"
     model_name = lock["ardy"]["repo_id"].split("/")[-1]
     print(f"Loading frozen {model_name} on {device}...", flush=True)
     model = load_model(model_name, device=str(device), text_encoder=False,
@@ -126,6 +130,7 @@ def generate(args, report):
     features = features.to(device)
     synchronize(device)
     start = time.perf_counter()
+    report["stage"] = "motion_generate"
     with torch.no_grad():
         motion = model([args.prompt], frames, num_denoising_steps=steps,
                        pad_mask=length_to_mask(motion_lengths),
@@ -136,6 +141,7 @@ def generate(args, report):
         output = to_numpy(model.motion_rep.inverse(motion, is_normalized=True))
     synchronize(device)
     report["motion_generate_seconds"] = time.perf_counter() - start
+    report["stage"] = "reference_export"
     converter = MujocoQposConverter(model.skeleton)
     qpos = converter.dict_to_qpos(output, device="cpu")[0]
     if qpos.shape != (frames, 36) or not np.isfinite(qpos).all():
@@ -153,7 +159,7 @@ def generate(args, report):
                         joint_pos=reference.joint_pos, joint_vel=reference.velocities(),
                         body_quat=reference.body_quat, joint_names=np.array(ISAACLAB_JOINT_NAMES), fps=50)
     (args.out / "reference.packet").write_bytes(JointStreamEncoder().encode(reference))
-    report.update(status="passed", model=model_name, fps=fps, frames=frames,
+    report.update(status="passed", stage="complete", model=model_name, fps=fps, frames=frames,
                   source_xml_sha256=sha256(converter.xml_path), diffusion_steps=steps,
                   history_frames=history, cfg_weight=[2.0, 2.0],
                   motion_seconds=frames / fps,

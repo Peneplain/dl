@@ -65,11 +65,43 @@ return a nonzero exit code.
 python scripts/fetch_baseline.py --only sources
 python scripts/fetch_baseline.py --only ardy
 python scripts/fetch_baseline.py --only text
+python scripts/check_baseline.py --device musa
 python scripts/run_ardy.py \
   --device musa --text-device cpu --text-dtype float32 \
   --prompt "A person stands still." --duration 2 --seed 0 \
   --out artifacts/ardy-stand-01
 ```
+
+The text encoder needs three separate downloads. The directory names are kept
+compatible with earlier installations:
+
+| Directory under `checkpoints/baseline/` | Contents |
+| --- | --- |
+| `llama_base/` | `meta-llama/Meta-Llama-3-8B-Instruct`, the full 8B backbone |
+| `text_base/` | McGill's `LLM2Vec-Meta-Llama-3-8B-Instruct-mntp` adapter and tokenizer |
+| `text_adapter/` | McGill's `LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised` adapter |
+
+The McGill repositories contain adapters, not the Llama backbone. `--only text`
+downloads all three; `--only llama` fetches just the backbone. Access to the
+Meta repository requires accepting its license and using an authorized Hugging
+Face account. Inference loads Llama locally, merges MNTP, then applies the
+supervised adapter. It does not resolve the adapter's remote base-model path.
+
+If Llama is already downloading with `hf download`, let it finish. Put its
+download directory at `checkpoints/baseline/llama_base`, or symlink that path to
+the existing directory. Keep the `.cache/huggingface` metadata (or the original
+Hugging Face snapshot and blob links). Register it without network access:
+
+```bash
+python scripts/fetch_baseline.py --only llama --offline
+python scripts/check_baseline.py --device musa
+```
+
+Offline registration checks the pinned revision, every shard, and the download
+ETags before writing a manifest. It refuses an incomplete download or missing
+provenance. To resume a download in place against the pinned revision, run
+`python scripts/fetch_baseline.py --only llama` with network access. Completed
+manifests are verified and reused; a failed network retry does not delete them.
 
 LLM2Vec has 8B parameters. CPU float32 weights alone require roughly 32 GB of
 memory, with additional space needed during loading. If host memory is limited,
@@ -82,6 +114,12 @@ inference and the full diffusion schedule. It loads verified local snapshots
 and explicitly selects Horizon8. In the pinned upstream registry, the shorthand
 `g1` selects Horizon52, and the upstream generation CLI does not select MUSA.
 
+Use the pinned `transformers==5.8.1` dependency. `baseline/llama.py` supplies
+the bidirectional padding mask explicitly because this Transformers version
+no longer calls the upstream model's `_update_causal_mask` override. The local
+tests check both future-token attention and padding isolation. Tokenization,
+prompt formatting and pooling still use the pinned ARDY implementation.
+
 Each run requires a fresh output directory and writes:
 
 | File | Contents |
@@ -92,6 +130,10 @@ Each run requires a fresh output directory and writes:
 | `reference.packet` | Offline SONIC v1 packet; no network transmission |
 | `text_embedding.npz` | The prompt embedding |
 | `report.json` | Devices, versions, hashes, timings and any failure |
+
+Failures include the stage (`preflight`, `text_load`, `text_encode`,
+`motion_load`, `motion_generate` or `reference_export`). A passing preflight
+checks installation and files; run both actual model checks afterward.
 
 After standing motion works, try a standing arm-raise prompt. Use `--constraints`
 to supply a constraint file in the upstream format. Generated references still

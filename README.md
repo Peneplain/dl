@@ -129,6 +129,8 @@ output directory for each run. Check MUSA on the target machine with
 ```text
 baseline/
   common.py         Source and weight provenance
+  text_encoder.py   Local Llama backbone and two frozen LLM2Vec adapters
+  llama.py          Bidirectional attention compatibility
   adapters/         G1 joint order, reference resampling and SONIC packets
 configs/
   baseline.lock.json

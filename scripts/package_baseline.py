@@ -12,7 +12,7 @@ TOP_FILES = {"AGENTS.md", "README.md", "Dockerfile.musa", ".gitignore", ".docker
              "pyproject.toml", "requirements-musa.txt", "requirements-cpu.txt",
              "requirements-baseline.txt", "configs/baseline.lock.json",
              "docs/baseline.md", "docs/integration.md", "docs/verification.md",
-             "docs/proposal.tex", "scripts/check_backend.py", "scripts/check_sonic_onnx.py",
+             "docs/proposal.tex", "scripts/check_backend.py", "scripts/check_baseline.py", "scripts/check_sonic_onnx.py",
              "scripts/fetch_baseline.py", "scripts/install_baseline.sh",
              "scripts/package_baseline.py", "scripts/prepare_reference.py",
              "scripts/run_ardy.py", "scripts/smoke.py"}
@@ -25,6 +25,7 @@ def source_files(root):
     for directory in sorted(SOURCE_DIRS):
         files.extend(path for path in sorted((root / directory).rglob("*"))
                      if path.is_file() and path.suffix in SUFFIXES
+                     and (path.suffix != ".py" or path.stem.isidentifier())
                      and not any(part.startswith(".") or part == "__pycache__"
                                  for part in path.relative_to(root).parts))
     for path in files:
