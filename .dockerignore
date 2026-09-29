@@ -1,6 +1,7 @@
 .git
 .venv
 .venv-musa
+.venv-*
 __pycache__
 artifacts
 checkpoints

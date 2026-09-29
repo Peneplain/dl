@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "g1-baseline"
+version = "0.1.0"
+description = "Frozen ARDY and SONIC baseline integration for simulated G1"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24,<2"]
+
+[project.optional-dependencies]
+stream = ["pyzmq>=25"]
+dev = ["ruff>=0.6"]
+
+[tool.setuptools.packages.find]
+include = ["baseline*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

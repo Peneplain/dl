@@ -16,6 +16,7 @@ if [[ -t 0 && -t 1 ]]; then
 fi
 
 exec docker run --rm "${tty_flags[@]}" \
+  --runtime=mthreads \
   --shm-size="${MUSA_SHM_SIZE:-16g}" \
   --ipc=host \
   --ulimit memlock=-1 \

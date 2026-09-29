@@ -16,10 +16,21 @@ GR00T and real hardware; those are superseded for this repository.
 - B1/B2/I1 reuse one residual checkpoint. No-gate reuses P without retraining.
 - Keep real model weights, rollout data, generated artifacts and credentials out of Git.
 
+# Code boundaries
+
+- This revision ships only B0. Keep its implementation under `baseline/`.
+- The future Risk + Residual extension may depend on `baseline/`; baseline must
+  not import the extension or require its models, training code or configs.
+- Keep learning code, dataset tooling and ablations out of the baseline commit
+  and upload archive. Describe the extension as planned in the README.
+- Preserve the proposal's overall research scope when documenting B0.
+
 # Validation
 
-Run `python -m unittest discover -s tests -v` for model/control/data changes.
-Run `python scripts/smoke.py --out artifacts/<fresh-run>` after training or
-checkpoint-interface changes. The CPU smoke run is not evidence of grasp success.
+Run `python scripts/smoke.py --out artifacts/<fresh-run>` after reference or
+checkpoint-interface changes. This checks a synthetic baseline reference and
+packet conversion; it runs no training and is not evidence of grasp success.
 Check actual S4000 operators with `scripts/check_backend.py --device musa` in
-the cluster's supported environment; do not assume CUDA/TensorRT compatibility.
+the cluster's supported environment, followed by the actual ARDY and SONIC
+checks; primitive checks do not establish model compatibility. Do not assume
+CUDA/TensorRT compatibility.
