@@ -168,6 +168,28 @@ After standing motion works, try a standing arm-raise prompt. Use `--constraints
 to supply a constraint file in the upstream format. Generated references still
 need joint-limit, collision and standing-feasibility checks before execution.
 
+### Keep the models loaded
+
+For several prompts, start the persistent service once. It loads LLM2Vec and
+ARDY a single time and then reads one prompt per JSONL line from standard input:
+
+```bash
+python scripts/ardy_service.py \
+  --device musa --text-device musa --text-dtype bfloat16 \
+  --out-root artifacts/ardy-service
+```
+
+Submit requests to the already running process, one JSON object per line:
+
+```json
+{"name":"stand","prompt":"A person stands still.","duration":2,"seed":0}
+{"name":"left-hand","prompt":"A person moves up the left hand.","duration":2,"seed":1}
+```
+
+Each request gets its own directory under `--out-root` and writes the same
+motion and reference files as the single-run entry point. Send `quit` to stop
+the service. The service keeps both models loaded between requests.
+
 ## Connect the simulation
 
 The remaining work is to connect inference to physical execution:
