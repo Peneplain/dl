@@ -16,14 +16,16 @@ def checkout(destination, source):
     if not destination.exists() or (destination.is_dir() and not any(destination.iterdir())):
         destination.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "init", str(destination)], check=True)
-        subprocess.run(["git", "-C", str(destination), "remote", "add", "origin", source["url"]], check=True)
+        subprocess.run(["git", "-c", f"safe.directory={destination}", "-C", str(destination),
+                        "remote", "add", "origin", source["url"]], check=True)
     checked_repo_root(destination)
+    git = ["git", "-c", f"safe.directory={destination}", "-C", str(destination)]
     # Resume an interrupted initial fetch; never reset an existing checkout.
-    head = subprocess.run(["git", "-C", str(destination), "rev-parse", "--verify", "HEAD"],
+    head = subprocess.run(git + ["rev-parse", "--verify", "HEAD"],
                           capture_output=True, text=True)
     if head.returncode:
-        subprocess.run(["git", "-C", str(destination), "fetch", "--depth", "1", "origin", source["commit"]], check=True)
-        subprocess.run(["git", "-C", str(destination), "checkout", "--detach", "FETCH_HEAD"], check=True)
+        subprocess.run(git + ["fetch", "--depth", "1", "origin", source["commit"]], check=True)
+        subprocess.run(git + ["checkout", "--detach", "FETCH_HEAD"], check=True)
     checked_checkout(destination, source["commit"])
 
 

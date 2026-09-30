@@ -1,5 +1,6 @@
 """Protect bring-up evidence and the source-only upload boundary."""
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -152,7 +153,8 @@ class BaselineBringupTests(unittest.TestCase):
     def test_archive_excludes_weights_credentials_and_artifacts(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for name in ("scripts/run_ardy.py", "scripts/__pycache__/foo.py", "scripts/secret.pt",
+            for name in ("scripts/run_ardy.py", "scripts/ardy_service.py",
+                         "scripts/prepare_deploy_motion.py", "scripts/__pycache__/foo.py", "scripts/secret.pt",
                          ".env", ".env.secret", "checkpoints/model.onnx", "artifacts/run.json",
                          "third_party/source.py", "README.md", "configs/baseline.lock.json",
                          "risk_residual/models/model.py", "scripts/train_risk.py",
@@ -161,7 +163,8 @@ class BaselineBringupTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("fixture")
             actual = {str(path.relative_to(root)) for path in source_files(root)}
-            self.assertEqual(actual, {"README.md", "scripts/run_ardy.py", "configs/baseline.lock.json"})
+            self.assertEqual(actual, {"README.md", "scripts/run_ardy.py", "scripts/ardy_service.py",
+                                      "scripts/prepare_deploy_motion.py", "configs/baseline.lock.json"})
 
     def test_archive_rejects_source_symlink(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -193,6 +196,23 @@ class BaselineBringupTests(unittest.TestCase):
             path.write_text("local modification")
             with self.assertRaisesRegex(RuntimeError, "dirty=True"):
                 checked_checkout(root, commit)
+
+    def test_hydrated_lfs_files_are_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", directory], check=True)
+            path = root / "mesh.STL"
+            data = b"binary STL contents"
+            digest = hashlib.sha256(data).hexdigest()
+            path.write_text("version https://git-lfs.github.com/spec/v1\n"
+                            f"oid sha256:{digest}\nsize {len(data)}\n")
+            subprocess.run(["git", "-C", directory, "add", "mesh.STL"], check=True)
+            subprocess.run(["git", "-C", directory, "-c", "user.name=Test", "-c",
+                            "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+                            "commit", "-qm", "fixture"], check=True)
+            commit = subprocess.check_output(["git", "-C", directory, "rev-parse", "HEAD"], text=True).strip()
+            path.write_bytes(data)
+            self.assertEqual(checked_checkout(root, commit), commit)
 
     def test_missing_assets_leave_failure_report_and_nonzero_exit(self):
         root = Path(__file__).resolve().parents[1]

@@ -190,6 +190,26 @@ Each request gets its own directory under `--out-root` and writes the same
 motion and reference files as the single-run entry point. Send `quit` to stop
 the service. The service keeps both models loaded between requests.
 
+### Prepare a reference for the SONIC deploy reader
+
+The offline `reference.packet` is a serialization fixture; it does not publish
+DDS commands to a running simulator. The upstream C++ deploy reader instead
+expects one motion directory containing CSV arrays. Convert an ARDY result with:
+
+```bash
+python scripts/prepare_deploy_motion.py \
+  --reference artifacts/ardy-service/kick/reference.npz \
+  --motion-csv artifacts/ardy-service/kick/motion.csv \
+  --out-dir artifacts/sonic-deploy-motion \
+  --name kick
+```
+
+This writes the 29-joint position/velocity arrays, root position/orientation,
+root velocities and metadata at 50 Hz. It prepares deploy input only; it does
+not start MuJoCo or claim a tracking result. The C++ deploy executable and its
+matching observation/checkpoint configuration must be built and verified before
+the directory can drive `run_sim_loop.py` through DDS.
+
 ## Connect the simulation
 
 The remaining work is to connect inference to physical execution:

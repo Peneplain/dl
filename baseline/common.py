@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -28,14 +29,50 @@ def write_json(path, data):
 def checked_checkout(path, commit):
     path = Path(path).resolve()
     checked_repo_root(path)
+    git = ["git", "-c", f"safe.directory={path}", "-C", str(path)]
     actual = subprocess.check_output(
-        ["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip()
-    dirty = subprocess.check_output(
-        ["git", "-C", str(path), "status", "--porcelain", "--untracked-files=no"],
-        text=True).strip()
+        git + ["rev-parse", "HEAD"], text=True).strip()
+    status = subprocess.check_output(
+        git + ["status", "--porcelain", "--untracked-files=no"],
+        text=True)
+    dirty = []
+    for line in status.splitlines():
+        if not line:
+            continue
+        # A hydrated Git LFS file has an LFS pointer in the committed index and
+        # binary contents in the worktree. It is required for local MuJoCo
+        # execution, so it is clean with respect to source provenance.
+        if line.startswith(" M ") and _is_hydrated_lfs_file(path, line[3:]):
+            continue
+        dirty.append(line)
     if actual != commit or dirty:
         raise RuntimeError(f"Expected clean upstream {commit} at {path}; got {actual}, dirty={bool(dirty)}")
     return actual
+
+
+def _is_hydrated_lfs_file(repo: Path, relative_path: str) -> bool:
+    """Return whether a worktree change replaces a committed LFS pointer."""
+    pointer = subprocess.run(
+        ["git", "-c", f"safe.directory={repo}", "-C", str(repo),
+         "show", f"HEAD:{relative_path}"],
+        capture_output=True,
+    )
+    if pointer.returncode or not pointer.stdout.startswith(
+        b"version https://git-lfs.github.com/spec/v1\n"
+    ):
+        return False
+    pointer_text = pointer.stdout.decode("ascii", errors="ignore")
+    oid_match = re.search(r"^oid sha256:([0-9a-f]{64})$", pointer_text, re.MULTILINE)
+    size_match = re.search(r"^size (\d+)$", pointer_text, re.MULTILINE)
+    if not oid_match or not size_match:
+        return False
+    worktree_path = repo / relative_path
+    try:
+        if not worktree_path.is_file() or worktree_path.stat().st_size != int(size_match.group(1)):
+            return False
+        return sha256(worktree_path) == oid_match.group(1)
+    except OSError:
+        return False
 
 
 def checked_repo_root(path):
@@ -43,7 +80,8 @@ def checked_repo_root(path):
     path = Path(path).resolve()
     if not path.is_dir():
         raise FileNotFoundError(f"Missing upstream source: {path}; run fetch_baseline.py --only sources or import its Git bundle")
-    result = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+    result = subprocess.run(["git", "-c", f"safe.directory={path}", "-C", str(path),
+                             "rev-parse", "--show-toplevel"],
                             capture_output=True, text=True)
     if result.returncode or Path(result.stdout.strip()).resolve() != path:
         raise RuntimeError(f"Expected a separate Git checkout at {path}")

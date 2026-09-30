@@ -3,6 +3,7 @@
 .venv-musa
 .venv-*
 __pycache__
+MUJOCO_LOG.TXT
 artifacts
 checkpoints
 datasets
@@ -17,6 +18,7 @@ wandb
 *.bundle.sha256
 sonic-offline-*.tar.gz
 sonic-offline-*.tar.gz.sha256
+sonic-wheels
 .cache
 .env
 .env.*

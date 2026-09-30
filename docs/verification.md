@@ -196,3 +196,38 @@ inspected. Edge ordering was adjusted to place Risk and Residual before SONIC
 in the displayed flow. The diagrams and data flow were checked against the
 proposal; `git diff --check` passed. This documentation-only change required no
 model or simulation runs.
+
+## September 30 final local bring-up
+
+After the offline SONIC source and mesh transfer, the matching MUSA container
+ran the following checks without downloading or replacing model files:
+
+- `python scripts/check_backend.py --device musa` passed MUSA linear,
+  layer-normalization and scaled-dot-product attention operators.
+- `python scripts/check_baseline.py --device musa` passed all dependency,
+  pinned-source and five local asset-manifest checks. The upstream SONIC mesh
+  files are hydrated Git LFS files; provenance validation accepts those files
+  while continuing to reject ordinary source changes.
+- `python scripts/smoke.py --out artifacts/baseline-final-smoke-20260930`
+  passed the synthetic 25-to-50 Hz reference conversion.
+- `python scripts/check_sonic_onnx.py --out
+  artifacts/baseline-final-sonic-20260930` passed both frozen CPU ONNX graphs.
+  The encoder and decoder produced finite outputs with the expected shapes.
+- `python scripts/run_ardy.py --device musa --text-device musa
+  --text-dtype bfloat16 --duration 5 --seed 42` passed for the kick prompt in
+  `artifacts/ardy-final-kick-20260930/`. It generated 125 ARDY frames and the
+  50 Hz SONIC reference; text loading took 117.2 s, text encoding 18.1 s and
+  motion generation 5.3 s on the selected MUSA device.
+- `scripts/prepare_deploy_motion.py` converted that reference into 249 frames
+  at 50 Hz under `artifacts/sonic-deploy-motion-final-20260930/kick/`, with all
+  required C++ deploy CSV files and metadata.
+- A headless `run_sim_loop.py --interface bond0 --no-enable-onscreen` process
+  remained alive for a 20-second smoke window. It initialized MuJoCo and then
+  was stopped by the test timeout. The known duplicate Unitree DDS
+  initialization message was printed; no tracking or task result was claimed.
+
+These checks establish local model loading, reference conversion and simulator
+startup. They do not establish SONIC tracking, contact physics or kick/grasp
+success. The C++ deploy executable and its matching TensorRT release policy are
+still required to publish `rt/lowcmd` commands from the converted motion into
+the MuJoCo bridge.

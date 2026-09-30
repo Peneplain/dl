@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .DS_Store
+MUJOCO_LOG.TXT
 artifacts/
 datasets/
 checkpoints/
@@ -22,6 +23,7 @@ wandb/
 *.bundle.sha256
 /sonic-offline-*.tar.gz
 /sonic-offline-*.tar.gz.sha256
+/sonic-wheels/
 .env
 .env.*
 !.env.example

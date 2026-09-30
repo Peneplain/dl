@@ -15,7 +15,8 @@ TOP_FILES = {"AGENTS.md", "README.md", "Dockerfile.musa", ".gitignore", ".docker
              "docs/proposal.tex", "scripts/check_backend.py", "scripts/check_baseline.py", "scripts/check_sonic_onnx.py",
              "scripts/fetch_baseline.py", "scripts/install_baseline.sh",
              "scripts/package_baseline.py", "scripts/prepare_reference.py",
-             "scripts/run_ardy.py", "scripts/smoke.py"}
+             "scripts/prepare_deploy_motion.py",
+             "scripts/run_ardy.py", "scripts/ardy_service.py", "scripts/smoke.py"}
 SOURCE_DIRS = {"baseline", "docker", "tests"}
 SUFFIXES = {".py", ".sh", ".yaml", ".yml", ".json", ".md", ".tex"}
 
