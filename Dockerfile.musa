@@ -1,7 +1,6 @@
-# The host driver is MUSA 4.3.x (MTT S4000). Keep the vendor torch/torch_musa
-# pair from this image together; replacing either package breaks device ABI.
+# Keep the vendor torch/torch_musa pair together for the S4000 driver ABI.
 ARG MUSA_BASE_IMAGE=registry.mthreads.com/mcconline/musa-pytorch-release-public:rc5.1.0-v2.9.1-S4000-py310
-FROM ${MUSA_BASE_IMAGE}
+FROM ${MUSA_BASE_IMAGE} AS common
 
 ENV DEBIAN_FRONTEND=noninteractive \
     MUSA_HOME=/usr/local/musa \
@@ -11,6 +10,29 @@ ENV DEBIAN_FRONTEND=noninteractive \
 WORKDIR /workspace/dl
 COPY requirements-musa.txt /tmp/requirements-musa.txt
 RUN python -m pip install --no-cache-dir -r /tmp/requirements-musa.txt
+
+# Build with --target gui to add software GLX and the virtual VNC desktop.
+FROM common AS gui
+
+RUN apt-get update \
+    && apt-get install --download-only -y --no-install-recommends \
+        libglvnd0 libglx0 libglx-mesa0 libglapi-mesa libgl1-mesa-dri \
+        xserver-xorg-core xserver-xorg-video-dummy x11vnc x11-utils \
+    && mkdir -p /opt/mujoco-gui-root \
+    && find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -print0 \
+        | xargs -0 -r -I '{}' dpkg-deb -x '{}' /opt/mujoco-gui-root \
+    && ln -s /opt/mujoco-gui-root/usr/share/X11/xkb /usr/share/X11/xkb \
+    && ln -s /opt/mujoco-gui-root/usr/bin/xkbcomp /usr/bin/xkbcomp \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
+
+ENV MUJOCO_GUI_ROOT=/opt/mujoco-gui-root \
+    PATH=/opt/mujoco-gui-root/usr/bin:/opt/mujoco-gui-root/usr/sbin:${PATH}
+
+ENTRYPOINT []
+CMD ["/bin/bash"]
+
+# Keep the ordinary build headless; select the optional desktop explicitly.
+FROM common AS runtime
 
 ENTRYPOINT []
 CMD ["/bin/bash"]

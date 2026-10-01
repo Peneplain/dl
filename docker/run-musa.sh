@@ -22,6 +22,7 @@ fi
 display_flags=()
 network_flags=()
 venv_flags=()
+gui_flags=()
 
 # The baseline installer targets this repository-local environment. Put it
 # first on PATH when it exists so `run-musa.sh bash` and direct commands use
@@ -35,7 +36,7 @@ if [[ -f "$repo_root/.venv-baseline-musa/pyvenv.cfg" ]]; then
   )
 fi
 
-if [[ -n "${DISPLAY:-}" ]]; then
+if [[ -n "${DISPLAY:-}" && "${MUJOCO_VNC:-0}" != "1" ]]; then
   display_flags+=(-e "DISPLAY=${DISPLAY}")
   xauthority_file="${XAUTHORITY:-${HOME:-}/.Xauthority}"
   if [[ -f "$xauthority_file" ]]; then
@@ -49,6 +50,17 @@ if [[ -n "${DISPLAY:-}" ]]; then
   fi
 fi
 
+if [[ "${MUJOCO_VNC:-0}" == "1" ]]; then
+  if [[ " ${network_flags[*]} " != *" --network=host "* ]]; then
+    network_flags+=(--network=host)
+  fi
+  gui_flags+=(
+    -e MUJOCO_VNC=1
+    -e "MUJOCO_VNC_PORT=${MUJOCO_VNC_PORT:-5900}"
+    -e "MUJOCO_VNC_DISPLAY=${MUJOCO_VNC_DISPLAY:-99}"
+  )
+fi
+
 exec docker run --rm "${tty_flags[@]}" \
   "${network_flags[@]}" \
   --runtime=mthreads \
@@ -58,6 +70,7 @@ exec docker run --rm "${tty_flags[@]}" \
   --ulimit stack=67108864 \
   "${display_flags[@]}" \
   "${venv_flags[@]}" \
+  "${gui_flags[@]}" \
   -e MTHREADS_VISIBLE_DEVICES="${visible_devices}" \
   -v "${repo_root}:/workspace/dl" \
   -w /workspace/dl \

@@ -138,9 +138,12 @@ downloads, local LLM2Vec loading, ARDY motion generation, a verified SONIC
 observation adapter and a free-base MuJoCo control loop. `scripts/run_live.py`
 accepts text commands in the same process, generates ARDY references in the
 background, installs them into the 50 Hz SONIC buffer and can write a
-display-free G1 mesh-state-reconstruction MP4. The tabletop task,
-contact grasping and GUI workflow are still under development; no grasping
-success is reported. Risk/Residual learning remains separate and planned. See
+display-free G1 mesh-state-reconstruction MP4. An optional GUI target in the
+MUSA Dockerfile provides a persistent software-GLX MuJoCo viewer over an
+SSH-tunneled VNC connection. The Mac client has displayed the viewer; prompt
+tracking and grasp success are separate checks. The tabletop task and contact
+grasping remain under development, and no grasping success is reported.
+Risk/Residual learning remains separate and planned. See
 [verification.md](docs/verification.md) for actual evidence and limits.
 
 The baseline setup and inference scripts run independently of learning code.

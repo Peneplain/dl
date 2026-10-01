@@ -36,10 +36,56 @@ restarts. When it exists, `docker/run-musa.sh` sets `VIRTUAL_ENV` and puts its
 For an already-open container or a shell that resets PATH, run
 `source .venv-baseline-musa/bin/activate` before invoking Python.
 
-When the host has SSH X11 forwarding such as `DISPLAY=localhost:10.0`,
-`docker/run-musa.sh` forwards the display and Xauthority cookie. For a server
-without a usable X server, run MuJoCo headlessly with SONIC's
-`--no-enable-onscreen`; the physics engine itself does not require a GUI.
+Direct SSH X11 forwarding reaches XQuartz, but the Mac setup here does not
+provide the GLX framebuffer configurations required by MuJoCo/GLFW. Build the
+runtime and its optional GUI target on the S4000 host from the repository root.
+The second build selects the GUI target and reuses the shared runtime layers:
+
+```bash
+cd ~/dl
+docker build -f Dockerfile.musa -t dl-musa:latest .
+docker build --target gui -f Dockerfile.musa -t dl-musa-gui:latest .
+```
+
+To start the VNC display, preload ARDY and SONIC, and open the interactive
+prompt session, run this single command from a Mac terminal. It uses the S4000
+address used by the current setup; change it if the host address changes:
+
+```bash
+ssh -tt -o ExitOnForwardFailure=yes \
+  -L 5901:127.0.0.1:5900 \
+  group3@10.123.0.39 \
+  'cd ~/dl && ./docker/run-mujoco-gui.sh'
+```
+
+Enter the server's SSH password. Keep this terminal open: it carries both the
+SSH tunnel and the prompt session. After the server reports that the viewer is
+open, open Screen Sharing from a second Mac terminal:
+
+```bash
+open vnc://localhost:5901
+```
+
+Leave the username blank and enter the fixed VNC password `group3`. The robot
+window opens after weights load and stays visible at its standing pose while
+waiting for prompts. Enter prompts in the first Mac terminal, one per line:
+
+```json
+{"prompt":"raise both arms slowly, then return to a balanced standing posture","duration":4,"seed":1}
+{"prompt":"walk slowly forward with alternating steps","duration":6,"seed":2}
+quit
+```
+
+Each prompt gets its own `run-NNNN` directory and MP4 under the timestamped
+`artifacts/interactive-gui-*` directory. The viewer remains open between
+prompts; simulated time is paused while waiting. If Mac port `5901` is occupied,
+change the local side and URL to `5902` while leaving the remote side at `5900`.
+The VNC server binds only to server localhost, and the SSH tunnel encrypts the
+connection. Press `Ctrl-C` in the first terminal to stop the session and
+container.
+
+The regular `dl-musa:latest` image remains headless. Omit `--gui` for headless
+physics and MP4 recording.
 
 The installer preserves the installed `torch` and `torch_musa` versions and
 records dependencies in `artifacts/baseline-install-*`. Its backend check tests
@@ -253,18 +299,20 @@ camera render; the current vendor image has no EGL/OSMesa/GLX runtime. The
 video metadata is recorded in `report.json`. Omit this option when only control
 metrics are needed.
 
-Use `--keep-alive` (or `--interactive`) to start a persistent session. ARDY,
-LLM2Vec, and SONIC are loaded before the first prompt is accepted and reused
-for the session. Each JSONL line creates an independent `run-0001`,
+Use `--keep-alive` (or `--interactive`) to start a persistent session. With
+`--gui`, the model and passive viewer are created after the frozen weights load,
+before input is accepted. The same viewer and MuJoCo model are reused across
+prompts; the state resets to standing between prompt runs while each gets
+independent logs and an MP4. Do not use `--fast` with `--gui` when you want to
+watch motion at real-time speed. ARDY, LLM2Vec, and SONIC are loaded once for
+the session. Each JSONL line creates an independent `run-0001`,
 `run-0002`, ... directory under `--out`; its prompt can change `duration` and
 `seed`, and its reference, video, events, trajectory, and report stay inside
-that directory. The existing session path is never reused: choose a fresh
-timestamped `--out` directory for each session. Enter `quit` to finish:
+that directory. The existing session path is never reused. Enter `quit` to
+finish:
 
 ```bash
-python scripts/run_live.py --keep-alive --fast \
-  --sim-seconds 10 --out artifacts/interactive-b0-01 \
-  --video artifacts/interactive-b0-01/baseline.mp4
+./docker/run-mujoco-gui.sh
 ```
 
 Then enter, one line at a time:

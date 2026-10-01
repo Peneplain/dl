@@ -3,7 +3,7 @@
 The SONIC loop stays at 50 Hz while ARDY generates a requested reference in a
 worker thread. A completed reference is installed through the shared timestamped
 buffer, with a short transition from the measured pose. The default run is
-headless; GUI forwarding is handled by ``docker/run-musa.sh`` when available.
+headless; the optional GUI uses the container's configured X display.
 """
 
 import argparse
@@ -43,7 +43,14 @@ def run_interactive(args):
     print("Loading ARDY service before accepting prompts...", file=sys.stderr, flush=True)
     service = ArdyService(args)
     print("Loading SONIC policy before accepting prompts...", file=sys.stderr, flush=True)
+    sonic_load_started = time.perf_counter()
     policy = SonicPolicy(args.assets, args.sonic_repo, threads=2)
+    video_name = Path(args.video).name if args.video else None
+    simulation = SonicSimulation(args.assets, args.sonic_repo, None,
+                                 threads=2, policy=policy, gui=args.gui)
+    print(f"ARDY and SONIC ready in {time.perf_counter() - sonic_load_started:.1f}s; "
+          "MuJoCo viewer is open. Enter a prompt (or 'quit' to stop).",
+          file=sys.stderr, flush=True)
 
     requests = queue.Queue()
     stop_input = threading.Event()
@@ -75,13 +82,13 @@ def run_interactive(args):
 
     input_thread = threading.Thread(target=read_input, name="stdin-reader", daemon=True)
     input_thread.start()
-    video_name = Path(args.video).name if args.video else None
 
     try:
         while not input_closed.is_set() or not requests.empty():
             try:
                 request = requests.get(timeout=.1)
             except queue.Empty:
+                simulation.sync_viewer()
                 continue
             if request.get("quit"):
                 break
@@ -91,8 +98,7 @@ def run_interactive(args):
             run_dir.mkdir(parents=False, exist_ok=False)
             (run_dir / "ardy").mkdir()
             video_path = run_dir / video_name if video_name else None
-            simulation = SonicSimulation(args.assets, args.sonic_repo, run_dir,
-                                         threads=2, video_path=video_path, policy=policy)
+            simulation.start_run(run_dir, video_path)
             final = {
                 "status": "running", "physics_executed": False,
                 "sonic_executed": False, "task_success": None,
@@ -106,8 +112,15 @@ def run_interactive(args):
                                  duration=request["duration"], seed=request["seed"])
                 output = run_dir / "ardy" / request["name"]
                 try:
-                    report = service.generate(request["prompt"], request["duration"],
-                                              request["seed"], output, history_qpos=history)
+                    with ThreadPoolExecutor(max_workers=1,
+                                            thread_name_prefix="ardy-request") as executor:
+                        future = executor.submit(
+                            service.generate, request["prompt"], request["duration"],
+                            request["seed"], output, history_qpos=history)
+                        while not future.done():
+                            simulation.sync_viewer()
+                            time.sleep(.02)
+                        report = future.result()
                     reference = simulation.load_reference(output / "reference.npz")
                     simulation.install(reference)
                     final["ardy_reports"] = [report]
@@ -146,9 +159,11 @@ def run_interactive(args):
                 else:
                     final["status"] = "passed"
                 write_json(run_dir / "report.json", final)
-                simulation.close()
+                simulation.end_run()
+                simulation.reset()
     finally:
         stop_input.set()
+        simulation.close()
 
 
 def main():
@@ -162,6 +177,8 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--video", type=Path,
                         help="Write a display-free MuJoCo body-state reconstruction MP4")
+    parser.add_argument("--gui", action="store_true",
+                        help="Keep a passive MuJoCo viewer open during the interactive session")
     parser.add_argument("--reference", type=Path,
                         help="Install an existing reference.npz before starting input")
     parser.add_argument("--prompt", help="Queue one initial text command")
@@ -197,7 +214,7 @@ def main():
     (args.out / "ardy").mkdir()
 
     simulation = SonicSimulation(args.assets, args.sonic_repo, args.out, threads=2,
-                                 video_path=args.video)
+                                 video_path=args.video, gui=args.gui)
     requests = queue.Queue()
     stop_input = threading.Event()
     input_closed = threading.Event()

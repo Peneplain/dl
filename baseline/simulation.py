@@ -168,22 +168,19 @@ class StateVideoWriter:
 
 
 class SonicSimulation:
-    def __init__(self, assets, repo, output, threads=2, video_path=None, policy=None):
+    def __init__(self, assets, repo, output, threads=2, video_path=None, policy=None,
+                 gui=False):
         self.policy = policy if policy is not None else SonicPolicy(assets, repo, threads)
         self.scene = repo / "gear_sonic/data/robot_model/model_data/g1/scene_43dof.xml"
         self.model = mujoco.MjModel.from_xml_path(str(self.scene))
         self.model.opt.timestep = .005
         self.data = mujoco.MjData(self.model)
-        self.output = Path(output)
-        self.events = (self.output / "events.jsonl").open("x", buffering=1)
-        self.trajectory_file = (self.output / "trajectory.csv").open("x", buffering=1)
-        self.trajectory = csv.writer(self.trajectory_file)
-        self.video = StateVideoWriter(self.model, video_path) if video_path else None
-        self.trajectory.writerow(["sim_time", "wall_time", "frame_index", "root_x", "root_y", "root_z",
-                                  "root_qw", "root_qx", "root_qy", "root_qz"] +
-                                 [f"q:{n}" for n in ISAACLAB_JOINT_NAMES] +
-                                 [f"ref:{n}" for n in ISAACLAB_JOINT_NAMES] +
-                                 [f"torque:{n}" for n in ISAACLAB_JOINT_NAMES])
+        self.output = None
+        self.events = None
+        self.trajectory_file = None
+        self.trajectory = None
+        self.video = None
+        self.viewer = None
         root = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "floating_base_joint")
         if root < 0 or self.model.jnt_type[root] != mujoco.mjtJoint.mjJNT_FREE:
             raise ValueError("The robot must have a free base")
@@ -214,13 +211,74 @@ class SonicSimulation:
         self.limit_clamps = 0
         self.reset_count = 0
         self.frame_index = 0
-        self.reset()
+        if output is None:
+            self.started = time.perf_counter()
+            self.reset()
+        else:
+            self.start_run(output, video_path)
+        if gui:
+            try:
+                from mujoco import viewer
+                self.viewer = viewer.launch_passive(self.model, self.data)
+                self.viewer.sync()
+            except Exception as error:
+                self.close()
+                raise RuntimeError(
+                    "MuJoCo GUI could not connect to the virtual Xorg/GLX display. "
+                    "Check the VNC startup logs and GUI image before retrying: "
+                    f"{type(error).__name__}: {error}") from error
 
     def event(self, event, **fields):
+        if self.events is None:
+            return
         import json
         self.events.write(json.dumps({"event": event, "sim_time": float(self.data.time),
                                      "wall_time": time.perf_counter() - self.started,
                                      **fields}, allow_nan=False) + "\n")
+
+    def start_run(self, output, video_path=None):
+        if self.output is not None:
+            raise RuntimeError("A simulation output run is already active")
+        self.output = Path(output)
+        if not self.output.is_dir():
+            raise FileNotFoundError(f"Run output directory does not exist: {self.output}")
+        self.events = (self.output / "events.jsonl").open("x", buffering=1)
+        self.trajectory_file = (self.output / "trajectory.csv").open("x", buffering=1)
+        self.trajectory = csv.writer(self.trajectory_file)
+        self.trajectory.writerow(["sim_time", "wall_time", "frame_index", "root_x", "root_y", "root_z",
+                                  "root_qw", "root_qx", "root_qy", "root_qz"] +
+                                 [f"q:{n}" for n in ISAACLAB_JOINT_NAMES] +
+                                 [f"ref:{n}" for n in ISAACLAB_JOINT_NAMES] +
+                                 [f"torque:{n}" for n in ISAACLAB_JOINT_NAMES])
+        self.video = StateVideoWriter(self.model, video_path) if video_path else None
+        self.started = time.perf_counter()
+        self.latencies = []
+        self.tracking_errors = []
+        self.deadline_misses = 0
+        self.limit_clamps = 0
+        self.reset_count = 0
+        self.frame_index = 0
+        self.reset()
+
+    def end_run(self):
+        if self.video is not None:
+            self.video.close()
+            self.video = None
+        if self.events is not None:
+            self.events.close()
+            self.events = None
+        if self.trajectory_file is not None:
+            self.trajectory_file.close()
+            self.trajectory_file = None
+            self.trajectory = None
+        self.output = None
+
+    def sync_viewer(self):
+        if self.viewer is None:
+            return
+        if not self.viewer.is_running():
+            raise SimulationStop("viewer_closed")
+        self.viewer.sync()
 
     def reset(self):
         mujoco.mj_resetData(self.model, self.data)
@@ -375,13 +433,16 @@ class SonicSimulation:
         error = float(np.sqrt(np.mean((self.data.qpos[self.q_indices] - p[0]) ** 2)))
         self.tracking_errors.append(error)
         self.pose_history.append((float(self.data.time), self.body_pose()))
-        self.trajectory.writerow([self.data.time, time.perf_counter() - self.started, self.frame_index] +
-                                  self.data.qpos[self.root_q:self.root_q + 7].tolist() +
-                                  self.data.qpos[self.q_indices].tolist() + p[0].tolist() +
-                                  self.data.ctrl[self.actuators].tolist())
+        if self.trajectory is not None:
+            self.trajectory.writerow([self.data.time, time.perf_counter() - self.started,
+                                      self.frame_index] +
+                                     self.data.qpos[self.root_q:self.root_q + 7].tolist() +
+                                     self.data.qpos[self.q_indices].tolist() + p[0].tolist() +
+                                     self.data.ctrl[self.actuators].tolist())
         if self.video:
             self.video.write(self.data, self.frame_index)
         self.frame_index += 1
+        self.sync_viewer()
         elapsed = time.perf_counter() - start
         self.deadline_misses += int(elapsed > .02)
         return elapsed
@@ -403,7 +464,9 @@ class SonicSimulation:
                 "video": self.video.summary() if self.video else None}
 
     def close(self):
-        if self.video:
-            self.video.close()
-        self.events.close()
-        self.trajectory_file.close()
+        if self.viewer is not None:
+            try:
+                self.viewer.close()
+            finally:
+                self.viewer = None
+        self.end_run()
