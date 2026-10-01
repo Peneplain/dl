@@ -2,8 +2,9 @@
 
 B0 uses `ARDY-G1-RP-25FPS-Horizon8` to generate motion references for a frozen
 SONIC controller and a free-base G1 in MuJoCo. The scripts below cover model
-setup and inference checks. The simulation control loop and grasping task are
-still under development; see [integration.md](integration.md) for the interfaces.
+setup, inference checks and the free-base standing/arm-motion control loop. The
+tabletop task and contact grasping remain under development; see
+[integration.md](integration.md) for the interfaces.
 
 ## Setup
 
@@ -15,19 +16,27 @@ git pull --ff-only origin main
 ```
 
 The launcher uses `dl-musa:latest` by default. Set `MUSA_IMAGE` if the image has a
-different name. Inside the container, create an environment that inherits the
+different name. Inside the container, create one environment that inherits the
 vendor PyTorch installation:
 
 ```bash
-python -m venv --system-site-packages .venv-baseline-musa
+# The vendor image has the venv module but omits ensurepip.
+python -m virtualenv --system-site-packages .venv-baseline-musa
 source .venv-baseline-musa/bin/activate
 bash scripts/install_baseline.sh
 ```
 
-If the image lacks `venv`, use
-`python -m virtualenv --system-site-packages .venv-baseline-musa` instead.
+If `virtualenv` is missing, install it in the container with
+`python -m pip install virtualenv` before creating the environment. The
+installer adds ARDY and SONIC simulation dependencies to this same
+`.venv-baseline-musa`; it never replaces the vendor `torch`/`torch_musa` pair.
 The environment lives in the mounted project directory and survives container
 restarts. Activate it again when opening a new container.
+
+When the host has SSH X11 forwarding such as `DISPLAY=localhost:10.0`,
+`docker/run-musa.sh` forwards the display and Xauthority cookie. For a server
+without a usable X server, run MuJoCo headlessly with SONIC's
+`--no-enable-onscreen`; the physics engine itself does not require a GUI.
 
 The installer preserves the installed `torch` and `torch_musa` versions and
 records dependencies in `artifacts/baseline-install-*`. Its backend check tests
@@ -35,7 +44,8 @@ inference primitives without importing any learning modules; ARDY and SONIC
 are checked separately below.
 
 It installs both `requirements-musa.txt` (including MuJoCo) and
-`requirements-baseline.txt`, so setup also covers the unmodified vendor image.
+`requirements-baseline.txt` plus `requirements-sonic-sim.txt`, so ARDY, SONIC
+and this repository use one environment.
 
 Source and model revisions are pinned in `configs/baseline.lock.json`. Downloads
 go to `third_party/` and `checkpoints/baseline/`, both excluded from Git. The
@@ -210,19 +220,33 @@ not start MuJoCo or claim a tracking result. The C++ deploy executable and its
 matching observation/checkpoint configuration must be built and verified before
 the directory can drive `run_sim_loop.py` through DDS.
 
-## Connect the simulation
+## Run the simulation
 
-The remaining work is to connect inference to physical execution:
+The headless B0 executor accepts commands while the 50 Hz SONIC loop runs:
 
-1. Implement SONIC's observation adapter from the pinned YAML and C++ gather
-   functions. Match G1 mode, history, future reference samples, relative
-   orientations, joint order and action scaling against upstream outputs.
-   SONIC's lookahead must come from its observation config, independently of
-   the risk model's eight-frame horizon.
-2. Load the G1 asset in MuJoCo with a free root, the correct actuator mapping,
-   default pose and PD gains. Establish standing with a known reference, then
-   track ARDY standing and arm motion. Record state, torque, tracking error,
-   falls, simulation time, wall time and video.
+```bash
+python scripts/run_live.py --out artifacts/live-b0-01 \
+  --prompt "Stand still and raise both arms" --duration 2 --sim-seconds 30
+```
+
+The first request loads the frozen ARDY text and motion models in a background
+worker. While it is loading or generating, MuJoCo continues to run the nominal
+SONIC hold. After generation, the 50 Hz timestamped buffer blends from the
+measured pose and executes the reference. Additional lines can be entered as
+plain text, or as JSON such as `{"prompt":"lower both arms","duration":2,"seed":1}`;
+`quit` ends the run. Add `--fast` for a non-real-time headless check. This path
+does not yet build the tabletop/block task or claim a grasp result.
+
+The current executor establishes free-base standing and reference tracking. The
+remaining work for the proposal's physical task is:
+
+1. Extend the verified SONIC observation adapter checks against upstream's C++
+   gather outputs. Keep G1 mode, history, future reference samples, relative
+   orientations, joint order and action scaling pinned; SONIC's lookahead must
+   remain independent of the risk model's eight-frame horizon.
+2. Broaden the free-base evidence with longer known-reference and ARDY standing
+   and arm-motion trials. Record state, torque, tracking error, falls, simulation
+   time, wall time and video.
 3. Add a reachable table, a dynamic block and articulated fingers. Use simulator
    object state to set wrist and standing constraints for approach, close,
    lift and hold. Calibrate finger control and contact parameters once and

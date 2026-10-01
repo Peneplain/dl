@@ -25,7 +25,7 @@ print("Preserving installed vendor packages:", ", ".join(pins))
 PY
 # Dependency conflicts fail resolution instead of replacing a pinned vendor package.
 python -m pip install -c "$run_dir/vendor-constraints.txt" \
-  -r requirements-musa.txt -r requirements-baseline.txt \
+  -r requirements-musa.txt -r requirements-baseline.txt -r requirements-sonic-sim.txt \
   2>&1 | tee "$run_dir/install.log"
 python - "$run_dir/vendor-constraints.txt" <<'PY'
 import importlib.metadata as metadata
@@ -36,6 +36,16 @@ for line in Path(sys.argv[1]).read_text().splitlines():
     if metadata.version(name) != expected:
         raise SystemExit(f"Vendor package changed: {name}")
 PY
+if [[ -d third_party/sonic/gear_sonic ]]; then
+  # Install source packages without resolving their generic torch dependency.
+  python -m pip install --no-deps -e third_party/sonic/gear_sonic \
+    2>&1 | tee -a "$run_dir/install.log"
+  if [[ -d third_party/sonic/external_dependencies/unitree_sdk2_python ]]; then
+    python -m pip install --no-deps -e third_party/sonic/external_dependencies/unitree_sdk2_python \
+      2>&1 | tee -a "$run_dir/install.log"
+  fi
+fi
+python -m pip check 2>&1 | tee "$run_dir/pip-check.log"
 python -m pip freeze > "$run_dir/pip-freeze.txt"
 python scripts/check_backend.py --device musa \
   2>&1 | tee "$run_dir/backend.log"

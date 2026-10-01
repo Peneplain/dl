@@ -133,18 +133,18 @@ prioritize B0, B1, I2 and P and identify any unfinished experiments explicitly.
 
 ## Current implementation
 
-The repository currently provides the B0 setup and inference tools: pinned
-model downloads, local LLM2Vec loading, ARDY motion generation, reference
-conversion and frozen SONIC ONNX probes. The SONIC observation adapter, MuJoCo
-control loop, task sequencer, physical reference checks and grasping task remain
-to be connected. Risk/Residual learning is planned; no physical grasping
-results are reported. See [verification.md](docs/verification.md) for the checks
-that have actually been run and their limits.
+The repository provides the B0 setup and inference path: pinned model
+downloads, local LLM2Vec loading, ARDY motion generation, a verified SONIC
+observation adapter and a free-base MuJoCo control loop. `scripts/run_live.py`
+accepts text commands in the same process, generates ARDY references in the
+background and installs them into the 50 Hz SONIC buffer. The tabletop task,
+contact grasping and GUI workflow are still under development; no grasping
+success is reported. Risk/Residual learning remains separate and planned. See
+[verification.md](docs/verification.md) for actual evidence and limits.
 
-The baseline setup and inference scripts run independently of learning code;
-the end-to-end B0 executor is not yet implemented. Learned corrections, training
-and data tooling belong in separate modules that can reuse the baseline;
-`baseline/` must not depend on them.
+The baseline setup and inference scripts run independently of learning code.
+Learned corrections, training and data tooling belong in separate modules that
+can reuse the baseline; `baseline/` must not depend on them.
 
 ## Run on S4000
 
@@ -174,16 +174,21 @@ Set `MUSA_IMAGE` to use another compatible image, or
 `MTHREADS_VISIBLE_DEVICES=0` to select one S4000. Inside the container:
 
 ```bash
-python -m venv --system-site-packages .venv-baseline-musa
+# The vendor image omits ensurepip; use its installed virtualenv tool.
+python -m virtualenv --system-site-packages .venv-baseline-musa
 source .venv-baseline-musa/bin/activate
 bash scripts/install_baseline.sh
 python scripts/fetch_baseline.py --only sonic
 python scripts/check_sonic_onnx.py --out artifacts/sonic-cpu-01
 ```
 
+If the host has an SSH X11 `DISPLAY` (for example, `localhost:10.0`), the
+launcher forwards it and the matching Xauthority cookie automatically. A
+headless run needs no display; use SONIC's `--no-enable-onscreen` option.
+
 Continue with ARDY and LLM2Vec downloads using the [setup guide](docs/baseline.md).
-The official SONIC C++ deployment requires TensorRT/CUDA; the CPU ONNX probe
-checks the frozen graphs independently before the simulation adapter is built.
+The installer puts the SONIC simulation package and ARDY requirements into the
+same environment while preserving the vendor MUSA torch pair.
 
 ## Local checks
 

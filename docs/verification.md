@@ -231,3 +231,57 @@ startup. They do not establish SONIC tracking, contact physics or kick/grasp
 success. The C++ deploy executable and its matching TensorRT release policy are
 still required to publish `rt/lowcmd` commands from the converted motion into
 the MuJoCo bridge.
+
+## October 1 environment recovery
+
+The existing `dl-musa:latest` image exposes the vendor MUSA stack and
+`virtualenv`, but its Python installation has no `ensurepip`. A fresh
+`.venv-baseline-musa` was therefore created with
+`python -m virtualenv --system-site-packages`; the repository requirements now
+use the SONIC-compatible `scipy==1.15.3`, so this is the single environment for
+ARDY, SONIC and MuJoCo. The older `.venv-sonic-sim` is not needed by the
+repository entry points.
+
+Inside the repaired baseline environment, `check_baseline.py --device musa`
+passed all dependency, source and asset checks. The MUSA primitive check,
+synthetic reference smoke check, and CPU SONIC ONNX probe also passed. A real
+two-second prompt-to-reference run completed with MUSA text encoding and ARDY
+motion generation, writing the CSV, 50 Hz reference, packet and embedding
+artifacts under `artifacts/ardy-repair-20261001/`.
+All 17 repository unit tests passed in the same environment.
+
+With onscreen rendering disabled and both `DISPLAY` and `MUJOCO_GL` unset, the
+SONIC `run_sim_loop.py --interface sim --no-enable-onscreen` process initialized
+MuJoCo and remained alive for an eight-second timeout window. CycloneDDS emitted
+its existing local-interface warning; no tracking or task-success result was
+claimed. MuJoCo does not require an X11 display for this headless startup path.
+
+## October 1 unified B0 executor
+
+The updated installer completed in the same `.venv-baseline-musa` while
+preserving `torch==2.9.1` and `torch_musa==2.9.1+a18d871`. Imports for MuJoCo,
+ONNX Runtime, `gear_sonic`, Unitree SDK/CycloneDDS, and the ARDY dependencies
+passed. All 17 repository tests passed again.
+
+The new `scripts/run_live.py` was exercised with a real MUSA ARDY text request
+(`"Stand still."`, 0.08 s, seed 0) and 16 executed-history frames. ARDY text
+encoding took 19.98 s and motion generation 0.56 s; the reference was installed
+into the timestamped 50 Hz SONIC buffer. The run is recorded in
+`artifacts/live-text-20261001/`; it executed 734.44 s of headless simulation,
+kept the base free, and reported 3.69 ms SONIC p95 latency. This validates the
+text-to-reference-to-controller wiring, not tabletop contact or grasp success.
+
+A separate known-reference run in `artifacts/live-reference-20261001/` tracked
+4.58 s of free-base simulation with no target clamps and no control deadline
+misses. The generated-text run used `--fast` while ARDY was loading, so its
+large simulated-time value is expected; use the default real-time pacing for
+interactive operation.
+
+A default-paced two-second arm prompt is recorded in
+`artifacts/live-arm-realtime-20261001/`. The request completed with 8,124
+control frames, 162.48 s of simulation over 168.05 s wall time, no target
+clamps, 3.48 ms SONIC p95 latency and 0.0421 rad mean tracking RMSE. The
+simulation continued its nominal hold while the first ARDY service loaded and
+generated the reference, so the final simulation time exceeded the requested
+five-second minimum. This is expected for the current interactive bring-up;
+keep the process alive for subsequent prompts to avoid reloading the models.

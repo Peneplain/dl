@@ -1,11 +1,13 @@
 # ARDY, SONIC and MuJoCo integration
 
-The `baseline/` package contains model-independent reference and provenance utilities.
-The physical G1 execution path is the next milestone; the repository currently
-contains reference conversion and packet serialization, not a working grasp demo.
+The `baseline/` package contains model-independent reference, provenance and
+frozen SONIC execution utilities. `scripts/run_live.py` connects text input,
+ARDY reference generation, the timestamped reference buffer and a free-base
+MuJoCo G1 loop. It is a standing/arm-motion bring-up, not a grasp demo.
 The [B0 bring-up guide](baseline.md) now supplies pinned downloads, an explicit
 MUSA/CPU ARDY generation entry and a CPU SONIC ONNX graph check. These are
-separate acceptance gates, not a complete simulation executor.
+separate acceptance gates; tabletop task sequencing and grasp execution remain
+outside the current bring-up executor.
 
 ## Upstream interfaces checked
 
@@ -25,12 +27,14 @@ physical behavior still needs validation. Store asset hashes in run manifests.
 
 ## 1. Establish the external baseline
 
-Use the official environment instructions for each upstream project and verify
-checkpoint/text-encoder access first. Keep those environments separate from our
-baseline utilities. Confirm the available inference host supports the actual
-SONIC backend; an S4000 training allocation does not imply TensorRT compatibility.
+Use the official environment instructions for each upstream project only when
+you need an upstream diagnostic. The repository's supported B0 path puts ARDY,
+SONIC simulation dependencies and MuJoCo in the single `.venv-baseline-musa`;
+you do not need to create the upstream `.venv_sim` for `scripts/run_live.py`.
+Confirm the available inference host supports the actual SONIC backend; an S4000
+training allocation does not imply TensorRT compatibility.
 
-From the SONIC checkout, the documented simulation entry is:
+From the SONIC checkout, the upstream-only documented simulation entry is:
 
 ```bash
 source .venv_sim/bin/activate
@@ -87,25 +91,26 @@ Live overlapping replans must replace future references by their absolute frame
 indices, rather than assigning new indices to duplicate future times. Complete
 that scheduling/transport integration against the pinned receiver before live use.
 
-## 3. Connect the B0 control loop
+## 3. Run the B0 control loop
 
-The simulation executor is pending. It should:
+The current standing/arm-motion executor is `scripts/run_live.py`. It:
 
-1. Timestamp robot observations, task phase and planned hand commands.
-2. Use object state and the task sequencer to create wrist and standing
-   constraints, request ARDY motion and convert it to the canonical reference.
-3. Buffer the lookahead required by the selected SONIC observation configuration.
-4. At each 50 Hz reference tick, check limits from the active G1 asset using
-   elapsed simulation time, then recompute velocity and dependent kinematics.
-5. Apply clearance and collision checks, pass the reference to frozen SONIC and
-   issue the separate finger commands.
-6. Hold or stop on underrun or invalid references, logging the event. Preserve
-   clocks and frame indices, and reset controller and buffer state per episode.
+1. Timestamps measured poses and ARDY requests.
+2. Converts ARDY output to the canonical reference and accepts further text
+   requests while the simulation runs.
+3. Buffers the lookahead required by the selected SONIC observation configuration.
+4. At each 50 Hz reference tick, checks limits from the active G1 asset using
+   elapsed simulation time, then recomputes velocity and dependent kinematics.
+5. Applies the shared joint checks, passes the reference to frozen SONIC and
+   issues the separate finger commands.
+6. Holds or stops on underrun or invalid references, logging the event. Preserves
+   clocks and frame indices, and resets controller and buffer state per episode.
 
-`ReferenceBuffer` and the packet serializers are available in
-`baseline/adapters/`. The physical reference checks, hand state machine, live
-scheduler, sender and rollout logger are still pending. Additional body
-orientations or positions, if supplied, must be consistent with joint references.
+`ReferenceBuffer`, the ONNX observation adapter, MuJoCo executor and rollout
+logger are available in `baseline/`. The tabletop scene, task sequencer,
+clearance/collision policy and contact hand state machine are still pending.
+Additional body orientations or positions, if supplied, must be consistent with
+joint references.
 
 The planned Risk + Residual version will insert bounded arm offsets before step
 4, while reusing the baseline executor. It is documented separately in the
