@@ -21,6 +21,20 @@ fi
 # only need the socket mount.  Headless runs leave these arrays empty.
 display_flags=()
 network_flags=()
+venv_flags=()
+
+# The baseline installer targets this repository-local environment. Put it
+# first on PATH when it exists so `run-musa.sh bash` and direct commands use
+# the same pinned torch/torch_musa/ONNX stack without requiring an extra
+# `source` step inside the container.
+venv_dir="/workspace/dl/.venv-baseline-musa"
+if [[ -f "$repo_root/.venv-baseline-musa/pyvenv.cfg" ]]; then
+  venv_flags+=(
+    -e "VIRTUAL_ENV=${venv_dir}"
+    -e "PATH=${venv_dir}/bin:/usr/local/musa/bin:/usr/local/musa/mudnn/bin:/usr/local/musa/mudnn_bench/bin:/usr/local/musa/mccl_test:/usr/local/openmpi/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  )
+fi
+
 if [[ -n "${DISPLAY:-}" ]]; then
   display_flags+=(-e "DISPLAY=${DISPLAY}")
   xauthority_file="${XAUTHORITY:-${HOME:-}/.Xauthority}"
@@ -43,6 +57,7 @@ exec docker run --rm "${tty_flags[@]}" \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
   "${display_flags[@]}" \
+  "${venv_flags[@]}" \
   -e MTHREADS_VISIBLE_DEVICES="${visible_devices}" \
   -v "${repo_root}:/workspace/dl" \
   -w /workspace/dl \

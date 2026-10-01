@@ -31,7 +31,10 @@ If `virtualenv` is missing, install it in the container with
 installer adds ARDY and SONIC simulation dependencies to this same
 `.venv-baseline-musa`; it never replaces the vendor `torch`/`torch_musa` pair.
 The environment lives in the mounted project directory and survives container
-restarts. Activate it again when opening a new container.
+restarts. When it exists, `docker/run-musa.sh` sets `VIRTUAL_ENV` and puts its
+`bin` directory first on the container PATH, including for `run-musa.sh bash`.
+For an already-open container or a shell that resets PATH, run
+`source .venv-baseline-musa/bin/activate` before invoking Python.
 
 When the host has SSH X11 forwarding such as `DISPLAY=localhost:10.0`,
 `docker/run-musa.sh` forwards the display and Xauthority cookie. For a server
@@ -226,16 +229,65 @@ The headless B0 executor accepts commands while the 50 Hz SONIC loop runs:
 
 ```bash
 python scripts/run_live.py --out artifacts/live-b0-01 \
-  --prompt "Stand still and raise both arms" --duration 2 --sim-seconds 30
+  --prompt "Stand still and raise both arms" --duration 2 --sim-seconds 30 \
+  --video artifacts/live-b0-01/baseline.mp4
 ```
 
 The first request loads the frozen ARDY text and motion models in a background
-worker. While it is loading or generating, MuJoCo continues to run the nominal
-SONIC hold. After generation, the 50 Hz timestamped buffer blends from the
-measured pose and executes the reference. Additional lines can be entered as
-plain text, or as JSON such as `{"prompt":"lower both arms","duration":2,"seed":1}`;
-`quit` ends the run. Add `--fast` for a non-real-time headless check. This path
-does not yet build the tabletop/block task or claim a grasp result.
+worker. In default real-time mode, MuJoCo continues to run the nominal SONIC
+hold while it is loading or generating. After generation, the 50 Hz timestamped
+buffer blends from the measured pose and executes the reference. Additional
+lines can be entered as plain text, or as JSON such as
+`{"prompt":"lower both arms","duration":2,"seed":1}`;
+`quit` ends the run. Add `--fast` for a non-real-time headless check. In fast
+mode, the simulation clock pauses while a queued ARDY request is being
+generated, so model latency does not stretch the requested simulated
+choreography; plain real-time mode keeps the nominal SONIC hold running during
+that generation. `--keep-alive` also uses the paused-clock behavior so waiting
+for later interactive prompts is not recorded as motion time. This path does
+not yet build the tabletop/block task or claim a grasp result.
+
+`--video` writes a display-free MP4 from MuJoCo's computed G1 visual meshes and
+geom poses. It is a deterministic software mesh reconstruction, not an OpenGL
+camera render; the current vendor image has no EGL/OSMesa/GLX runtime. The
+video metadata is recorded in `report.json`. Omit this option when only control
+metrics are needed.
+
+Use `--keep-alive` (or `--interactive`) to start a persistent session. ARDY,
+LLM2Vec, and SONIC are loaded before the first prompt is accepted and reused
+for the session. Each JSONL line creates an independent `run-0001`,
+`run-0002`, ... directory under `--out`; its prompt can change `duration` and
+`seed`, and its reference, video, events, trajectory, and report stay inside
+that directory. The existing session path is never reused: choose a fresh
+timestamped `--out` directory for each session. Enter `quit` to finish:
+
+```bash
+python scripts/run_live.py --keep-alive --fast \
+  --sim-seconds 10 --out artifacts/interactive-b0-01 \
+  --video artifacts/interactive-b0-01/baseline.mp4
+```
+
+Then enter, one line at a time:
+
+```json
+{"prompt":"side-step right and return to standing","duration":4,"seed":1}
+{"prompt":"raise both arms, then lower them","duration":3,"seed":2}
+quit
+```
+
+The resulting layout is:
+
+```text
+artifacts/interactive-b0-01/
+  run-0001/{baseline.mp4,events.jsonl,trajectory.csv,report.json,ardy/}
+  run-0002/{baseline.mp4,events.jsonl,trajectory.csv,report.json,ardy/}
+```
+
+If ARDY produces a reference that violates the shared joint limits, the
+executor rejects that reference and keeps the robot in its default standing
+hold. The run still records the simulation and video, but `report.json` is
+marked `"status": "failed"` with `ardy_errors` instead of being reported as a
+successful baseline run.
 
 The current executor establishes free-base standing and reference tracking. The
 remaining work for the proposal's physical task is:

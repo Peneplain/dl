@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from baseline.ardy import ArdyService
 from baseline.common import ROOT, write_json
 from baseline.simulation import SimulationStop, SonicSimulation
+from baseline.sonic_policy import SonicPolicy
 
 
 def parse_request(line, index):
@@ -36,6 +37,120 @@ def parse_request(line, index):
             "seed": int(request.get("seed", 0)), "name": f"request-{index:04d}"}
 
 
+def run_interactive(args):
+    """Run independent prompt directories while reusing the frozen models."""
+    args.out.mkdir(parents=True, exist_ok=False)
+    print("Loading ARDY service before accepting prompts...", file=sys.stderr, flush=True)
+    service = ArdyService(args)
+    print("Loading SONIC policy before accepting prompts...", file=sys.stderr, flush=True)
+    policy = SonicPolicy(args.assets, args.sonic_repo, threads=2)
+
+    requests = queue.Queue()
+    stop_input = threading.Event()
+    input_closed = threading.Event()
+    request_index = 0
+    if args.prompt:
+        request_index += 1
+        requests.put({"prompt": args.prompt, "duration": args.duration,
+                      "seed": args.seed, "name": f"request-{request_index:04d}"})
+
+    def read_input():
+        nonlocal request_index
+        try:
+            for line in sys.stdin:
+                if stop_input.is_set():
+                    break
+                try:
+                    request_index += 1
+                    request = parse_request(line, request_index)
+                    if request is not None:
+                        requests.put(request)
+                        if request.get("quit"):
+                            break
+                except Exception as error:
+                    print(json.dumps({"status": "failed", "error": f"{type(error).__name__}: {error}"}),
+                          file=sys.stderr, flush=True)
+        finally:
+            input_closed.set()
+
+    input_thread = threading.Thread(target=read_input, name="stdin-reader", daemon=True)
+    input_thread.start()
+    video_name = Path(args.video).name if args.video else None
+
+    try:
+        while not input_closed.is_set() or not requests.empty():
+            try:
+                request = requests.get(timeout=.1)
+            except queue.Empty:
+                continue
+            if request.get("quit"):
+                break
+
+            run_number = int(request["name"].split("-")[-1])
+            run_dir = args.out / f"run-{run_number:04d}"
+            run_dir.mkdir(parents=False, exist_ok=False)
+            (run_dir / "ardy").mkdir()
+            video_path = run_dir / video_name if video_name else None
+            simulation = SonicSimulation(args.assets, args.sonic_repo, run_dir,
+                                         threads=2, video_path=video_path, policy=policy)
+            final = {
+                "status": "running", "physics_executed": False,
+                "sonic_executed": False, "task_success": None,
+                "commands": [{k: request[k] for k in ("prompt", "duration", "seed")}],
+                "ardy_failed": False, "fast": args.fast, "keep_alive": True,
+                "run_id": run_dir.name, "models_preloaded": True,
+            }
+            try:
+                history = simulation.history_qpos(args.history_frames)
+                simulation.event("ardy_request", prompt=request["prompt"],
+                                 duration=request["duration"], seed=request["seed"])
+                output = run_dir / "ardy" / request["name"]
+                try:
+                    report = service.generate(request["prompt"], request["duration"],
+                                              request["seed"], output, history_qpos=history)
+                    reference = simulation.load_reference(output / "reference.npz")
+                    simulation.install(reference)
+                    final["ardy_reports"] = [report]
+                    deadline = max(float(args.sim_seconds), float(simulation.end_time) + 2.0)
+                    print(json.dumps({"status": "installed", "run": run_dir.name,
+                                      "prompt": request["prompt"],
+                                      "motion_seconds": report["motion_seconds"]}), flush=True)
+                except Exception as error:
+                    final["ardy_failed"] = True
+                    final["ardy_errors"] = [{"type": type(error).__name__,
+                                             "message": str(error),
+                                             "request": request["name"]}]
+                    simulation.event("ardy_request_failed",
+                                     error=f"{type(error).__name__}: {error}")
+                    print(json.dumps({"status": "failed", "run": run_dir.name,
+                                      "error": f"{type(error).__name__}: {error}"}),
+                          file=sys.stderr, flush=True)
+                    deadline = float(args.sim_seconds)
+
+                while simulation.data.time < deadline:
+                    started = time.perf_counter()
+                    try:
+                        simulation.tick()
+                    except SimulationStop as error:
+                        simulation.event("simulation_stop", reason=str(error))
+                        final["stop_reason"] = str(error)
+                        break
+                    if not args.fast:
+                        time.sleep(max(0.0, .02 - (time.perf_counter() - started)))
+            finally:
+                final.update(simulation.summary())
+                if final.get("stop_reason") is not None:
+                    final["status"] = "stopped"
+                elif final.get("ardy_failed"):
+                    final["status"] = "failed"
+                else:
+                    final["status"] = "passed"
+                write_json(run_dir / "report.json", final)
+                simulation.close()
+    finally:
+        stop_input.set()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", default="musa")
@@ -45,6 +160,8 @@ def main():
     parser.add_argument("--sonic-repo", type=Path, default=ROOT / "third_party/sonic")
     parser.add_argument("--assets", type=Path, default=ROOT / "checkpoints/baseline")
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--video", type=Path,
+                        help="Write a display-free MuJoCo body-state reconstruction MP4")
     parser.add_argument("--reference", type=Path,
                         help="Install an existing reference.npz before starting input")
     parser.add_argument("--prompt", help="Queue one initial text command")
@@ -53,21 +170,37 @@ def main():
     parser.add_argument("--sim-seconds", type=float, default=30.0)
     parser.add_argument("--history-frames", type=int, default=16)
     parser.add_argument("--threads", type=int, default=4)
-    parser.add_argument("--fast", action="store_true",
-                        help="Run faster than wall-clock instead of pacing 50 Hz")
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Run without wall-clock pacing; pause simulated time while ARDY generates",
+    )
+    parser.add_argument(
+        "--keep-alive", "--interactive", dest="keep_alive", action="store_true",
+        help="Keep this run open for more JSONL prompts until quit or EOF",
+    )
     args = parser.parse_args()
     if args.out.exists():
         parser.error("Choose a fresh --out directory")
+    if args.video and args.video.exists():
+        parser.error("Choose a fresh --video path")
     if args.sim_seconds <= 0 or args.threads < 1 or args.duration < 0.08:
         parser.error("sim-seconds, threads and duration must be positive; duration >= 0.08")
     if args.history_frames < 4 or args.history_frames % 4:
         parser.error("history-frames must be a multiple of four and at least four")
-    args.out.mkdir(parents=True)
+    if args.keep_alive:
+        run_interactive(args)
+        return
+    # Keep the output directory a write-once run boundary, including against
+    # two processes racing to use the same timestamped path.
+    args.out.mkdir(parents=True, exist_ok=False)
     (args.out / "ardy").mkdir()
 
-    simulation = SonicSimulation(args.assets, args.sonic_repo, args.out, threads=2)
+    simulation = SonicSimulation(args.assets, args.sonic_repo, args.out, threads=2,
+                                 video_path=args.video)
     requests = queue.Queue()
     stop_input = threading.Event()
+    input_closed = threading.Event()
     request_index = 0
     if args.prompt:
         request_index += 1
@@ -76,19 +209,22 @@ def main():
 
     def read_input():
         nonlocal request_index
-        for line in sys.stdin:
-            if stop_input.is_set():
-                break
-            try:
-                request_index += 1
-                request = parse_request(line, request_index)
-                if request is not None:
-                    requests.put(request)
-                    if request.get("quit"):
-                        break
-            except Exception as error:
-                print(json.dumps({"status": "failed", "error": f"{type(error).__name__}: {error}"}),
-                      file=sys.stderr, flush=True)
+        try:
+            for line in sys.stdin:
+                if stop_input.is_set():
+                    break
+                try:
+                    request_index += 1
+                    request = parse_request(line, request_index)
+                    if request is not None:
+                        requests.put(request)
+                        if request.get("quit"):
+                            break
+                except Exception as error:
+                    print(json.dumps({"status": "failed", "error": f"{type(error).__name__}: {error}"}),
+                          file=sys.stderr, flush=True)
+        finally:
+            input_closed.set()
 
     input_thread = threading.Thread(target=read_input, name="stdin-reader", daemon=True)
     input_thread.start()
@@ -109,7 +245,8 @@ def main():
     active_request = None
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ardy-generator")
     final = {"status": "running", "physics_executed": False, "sonic_executed": False,
-             "task_success": None, "commands": []}
+             "task_success": None, "commands": [], "ardy_failed": False,
+             "fast": args.fast, "keep_alive": args.keep_alive}
     deadline = float(args.sim_seconds)
     if args.reference:
         simulation.install(simulation.load_reference(args.reference))
@@ -117,12 +254,21 @@ def main():
         deadline = max(deadline, float(simulation.end_time) + 2.0)
 
     try:
-        while simulation.data.time < deadline or future is not None or not requests.empty():
+        while (simulation.data.time < deadline or future is not None or not requests.empty()
+               or (args.keep_alive and not input_closed.is_set())):
             if future is None:
-                try:
-                    request = requests.get_nowait()
-                except queue.Empty:
-                    request = None
+                # Once the current simulated segment is complete, interactive
+                # mode waits here instead of advancing an idle simulation.
+                if args.keep_alive and simulation.data.time >= deadline and not input_closed.is_set():
+                    try:
+                        request = requests.get(timeout=.1)
+                    except queue.Empty:
+                        request = None
+                else:
+                    try:
+                        request = requests.get_nowait()
+                    except queue.Empty:
+                        request = None
                 if request is not None:
                     if request.get("quit"):
                         break
@@ -144,12 +290,24 @@ def main():
                     print(json.dumps({"status": "installed", "prompt": active_request["prompt"],
                                       "motion_seconds": report["motion_seconds"]}), flush=True)
                 except Exception as error:
+                    final["ardy_failed"] = True
+                    final.setdefault("ardy_errors", []).append(
+                        {"type": type(error).__name__, "message": str(error),
+                         "request": active_request["name"] if active_request else None}
+                    )
                     simulation.event("ardy_request_failed", error=f"{type(error).__name__}: {error}")
                     print(json.dumps({"status": "failed", "error": f"{type(error).__name__}: {error}"}),
                           file=sys.stderr, flush=True)
                 finally:
                     future = None
                     active_request = None
+
+            # Offline batches and persistent interactive runs must not turn
+            # ARDY wall time into recorded choreography time. Plain real-time
+            # mode intentionally keeps the nominal SONIC hold running.
+            if (args.fast or args.keep_alive) and future is not None:
+                time.sleep(.005)
+                continue
 
             started = time.perf_counter()
             try:
@@ -164,7 +322,12 @@ def main():
         stop_input.set()
         executor.shutdown(wait=False, cancel_futures=False)
         final.update(simulation.summary())
-        final["status"] = "passed" if final.get("stop_reason") is None else "stopped"
+        if final.get("stop_reason") is not None:
+            final["status"] = "stopped"
+        elif final.get("ardy_failed"):
+            final["status"] = "failed"
+        else:
+            final["status"] = "passed"
         write_json(args.out / "report.json", final)
         simulation.close()
 

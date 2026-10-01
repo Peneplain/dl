@@ -137,7 +137,8 @@ The repository provides the B0 setup and inference path: pinned model
 downloads, local LLM2Vec loading, ARDY motion generation, a verified SONIC
 observation adapter and a free-base MuJoCo control loop. `scripts/run_live.py`
 accepts text commands in the same process, generates ARDY references in the
-background and installs them into the 50 Hz SONIC buffer. The tabletop task,
+background, installs them into the 50 Hz SONIC buffer and can write a
+display-free G1 mesh-state-reconstruction MP4. The tabletop task,
 contact grasping and GUI workflow are still under development; no grasping
 success is reported. Risk/Residual learning remains separate and planned. See
 [verification.md](docs/verification.md) for actual evidence and limits.
@@ -172,6 +173,10 @@ sudo systemctl restart docker
 
 Set `MUSA_IMAGE` to use another compatible image, or
 `MTHREADS_VISIBLE_DEVICES=0` to select one S4000. Inside the container:
+
+The launcher selects the existing `.venv-baseline-musa` through the container
+PATH. Create it only for the first setup; in an already-open container, activate
+it with `source .venv-baseline-musa/bin/activate`.
 
 ```bash
 # The vendor image omits ensurepip; use its installed virtualenv tool.

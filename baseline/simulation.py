@@ -18,17 +18,167 @@ class SimulationStop(RuntimeError):
     pass
 
 
+class StateVideoWriter:
+    """Write a display-free MuJoCo G1 mesh reconstruction as MP4.
+
+    MuJoCo's RGB renderer needs an EGL/OSMesa/GLX library, which is not present
+    in the vendor image. This recorder still uses MuJoCo's computed geom poses
+    and loaded G1 mesh vertices after every control step and produces a
+    deterministic diagnostic video.
+    """
+
+    def __init__(self, model, path, *, fps=25, width=640, height=480):
+        from PIL import Image, ImageDraw
+        import imageio_ffmpeg
+        import subprocess
+
+        self.Image = Image
+        self.ImageDraw = ImageDraw
+        self.model = model
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.exists():
+            raise FileExistsError(f"Refusing to overwrite existing video: {self.path}")
+        self.fps = int(fps)
+        self.width = int(width)
+        self.height = int(height)
+        self.stride = max(1, int(round(50 / self.fps)))
+        self.frames = 0
+        self.first_sim_time = None
+        self.last_sim_time = None
+        self.closed = False
+        self.error = None
+        self._mesh_samples = {}
+        for mesh_id in range(model.nmesh):
+            start = int(model.mesh_vertadr[mesh_id])
+            count = int(model.mesh_vertnum[mesh_id])
+            vertices = np.asarray(model.mesh_vert[start:start + count], dtype=np.float32)
+            sample = np.linspace(0, count - 1, min(count, 250), dtype=np.int32)
+            self._mesh_samples[mesh_id] = vertices[sample]
+        self._mesh_geoms = [
+            geom for geom in range(model.ngeom)
+            if int(model.geom_type[geom]) == 7  # mjGEOM_MESH
+            and int(model.geom_group[geom]) == 1  # visual meshes, not collisions
+        ]
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+        self._process = subprocess.Popen(
+            [ffmpeg, "-n", "-f", "rawvideo", "-vcodec", "rawvideo",
+             "-s", f"{self.width}x{self.height}", "-pix_fmt", "rgb24",
+             "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264",
+             "-preset", "veryfast", "-crf", "20", "-bf", "0", "-g", str(self.fps),
+             "-fps_mode", "cfr", "-pix_fmt", "yuv420p",
+             str(self.path)], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL)
+
+    def _image(self, data):
+        image = self.Image.new("RGB", (self.width, self.height), (245, 247, 250))
+        draw = self.ImageDraw.Draw(image)
+        root = data.qpos[0:3] if len(data.qpos) >= 3 else np.zeros(3)
+        scale = 235.0
+
+        def project(point):
+            relative = point - root
+            u = self.width * .5 + scale * (relative[0] - .35 * relative[1])
+            v = self.height * .53 - scale * (relative[2] + .15 * relative[1])
+            return int(round(u)), int(round(v))
+
+        floor_y = project(np.array([root[0], root[1], 0.0]))[1]
+        draw.line((0, floor_y, self.width, floor_y), fill=(160, 170, 180), width=2)
+        for offset in np.arange(-1.5, 1.51, .5):
+            x = int(self.width * .5 + scale * offset)
+            draw.line((x, floor_y - 8, x - int(scale * .15), floor_y - 8 - int(scale * .9)),
+                      fill=(220, 225, 230), width=1)
+
+        def hull(points):
+            points = sorted(set(points))
+            if len(points) < 3:
+                return points
+
+            def cross(origin, first, second):
+                return ((first[0] - origin[0]) * (second[1] - origin[1]) -
+                        (first[1] - origin[1]) * (second[0] - origin[0]))
+
+            lower = []
+            for point in points:
+                while len(lower) >= 2 and cross(lower[-2], lower[-1], point) <= 0:
+                    lower.pop()
+                lower.append(point)
+            upper = []
+            for point in reversed(points):
+                while len(upper) >= 2 and cross(upper[-2], upper[-1], point) <= 0:
+                    upper.pop()
+                upper.append(point)
+            return lower[:-1] + upper[:-1]
+
+        polygons = []
+        for geom in self._mesh_geoms:
+            mesh_id = int(self.model.geom_dataid[geom])
+            local = self._mesh_samples[mesh_id]
+            rotation = np.asarray(data.geom_xmat[geom]).reshape(3, 3)
+            world = local @ rotation.T + np.asarray(data.geom_xpos[geom])
+            polygon = hull([project(point) for point in world])
+            if len(polygon) >= 3:
+                depth = float(np.mean(world[:, 1] - .35 * world[:, 0]))
+                color = tuple((self.model.geom_rgba[geom, :3] * 255).astype(np.uint8))
+                polygons.append((depth, polygon, color))
+        for _, polygon, color in sorted(polygons):
+            draw.polygon(polygon, fill=color, outline=(35, 40, 45))
+        draw.text((14, 14), f"MuJoCo G1 mesh reconstruction   t={data.time:7.2f}s",
+                  fill=(25, 30, 35))
+        draw.text((14, 34), "software projection of loaded MuJoCo visual meshes",
+                  fill=(80, 90, 100))
+        return np.asarray(image, dtype=np.uint8)
+
+    def write(self, data, frame_index):
+        if self.closed or frame_index % self.stride:
+            return
+        try:
+            self._process.stdin.write(self._image(data).tobytes())
+            if self.first_sim_time is None:
+                self.first_sim_time = float(data.time)
+            self.last_sim_time = float(data.time)
+            self.frames += 1
+        except (BrokenPipeError, OSError) as error:
+            self.error = f"{type(error).__name__}: {error}"
+            self.close()
+            raise RuntimeError(f"headless video encoder failed: {self.error}") from error
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            if self._process.stdin:
+                self._process.stdin.close()
+            return_code = self._process.wait(timeout=10)
+            if return_code and self.error is None:
+                self.error = f"ffmpeg exited with status {return_code}"
+        except Exception as error:
+            if self.error is None:
+                self.error = f"{type(error).__name__}: {error}"
+
+    def summary(self):
+        self.close()
+        return {"path": str(self.path), "renderer": "mujoco-mesh-state-reconstruction",
+                "fps": self.fps, "width": self.width, "height": self.height,
+                "frames": self.frames, "first_sim_time": self.first_sim_time,
+                "last_sim_time": self.last_sim_time,
+                "status": "passed" if self.error is None else "failed",
+                **({"error": self.error} if self.error else {})}
+
+
 class SonicSimulation:
-    def __init__(self, assets, repo, output, threads=2):
-        self.policy = SonicPolicy(assets, repo, threads)
+    def __init__(self, assets, repo, output, threads=2, video_path=None, policy=None):
+        self.policy = policy if policy is not None else SonicPolicy(assets, repo, threads)
         self.scene = repo / "gear_sonic/data/robot_model/model_data/g1/scene_43dof.xml"
         self.model = mujoco.MjModel.from_xml_path(str(self.scene))
         self.model.opt.timestep = .005
         self.data = mujoco.MjData(self.model)
         self.output = Path(output)
-        self.events = (self.output / "events.jsonl").open("w", buffering=1)
-        self.trajectory_file = (self.output / "trajectory.csv").open("w", buffering=1)
+        self.events = (self.output / "events.jsonl").open("x", buffering=1)
+        self.trajectory_file = (self.output / "trajectory.csv").open("x", buffering=1)
         self.trajectory = csv.writer(self.trajectory_file)
+        self.video = StateVideoWriter(self.model, video_path) if video_path else None
         self.trajectory.writerow(["sim_time", "wall_time", "frame_index", "root_x", "root_y", "root_z",
                                   "root_qw", "root_qx", "root_qy", "root_qz"] +
                                  [f"q:{n}" for n in ISAACLAB_JOINT_NAMES] +
@@ -229,6 +379,8 @@ class SonicSimulation:
                                   self.data.qpos[self.root_q:self.root_q + 7].tolist() +
                                   self.data.qpos[self.q_indices].tolist() + p[0].tolist() +
                                   self.data.ctrl[self.actuators].tolist())
+        if self.video:
+            self.video.write(self.data, self.frame_index)
         self.frame_index += 1
         elapsed = time.perf_counter() - start
         self.deadline_misses += int(elapsed > .02)
@@ -247,8 +399,11 @@ class SonicSimulation:
                 "sonic_latency_ms_p50": float(np.percentile(self.latencies, 50)) if self.latencies else None,
                 "sonic_latency_ms_p95": float(np.percentile(self.latencies, 95)) if self.latencies else None,
                 "sonic_source": self.policy.source_commit, "sonic_manifest_sha256": self.policy.asset_hash,
-                "scene_sha256": sha256(self.scene)}
+                "scene_sha256": sha256(self.scene),
+                "video": self.video.summary() if self.video else None}
 
     def close(self):
+        if self.video:
+            self.video.close()
         self.events.close()
         self.trajectory_file.close()
