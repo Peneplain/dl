@@ -62,6 +62,28 @@ class ReferenceSequence:
         """Recompute AFTER corrections/resampling. Units: rad/s."""
         return np.gradient(self.joint_pos, self.times, axis=0).astype(np.float32)
 
+    def sample_with_terminal_hold(self, times):
+        """Explicit finite-clip hold; caller must log missing future coverage.
+
+        This is not silent extrapolation: only the terminal pose is repeated.
+        Derivatives must be computed from the returned, resampled positions.
+        """
+        times = np.asarray(times, dtype=float)
+        if (times.ndim != 1 or len(times) < 2 or not np.isfinite(times).all()
+                or (np.diff(times) <= 0).any()):
+            raise ValueError("Need increasing finite query timestamps")
+        if times[0] < self.times[0] - 1e-8:
+            raise BufferUnderrun("Query precedes buffered motion")
+        clipped = np.clip(times, self.times[0], self.times[-1])
+        unique, inverse = np.unique(clipped, return_inverse=True)
+        if len(unique) == 1:
+            pos = np.repeat(self.joint_pos[-1:], len(times), axis=0)
+            quat = np.repeat(self.body_quat[-1:], len(times), axis=0)
+        else:
+            sampled = self.sample(unique)
+            pos, quat = sampled.joint_pos[inverse], sampled.body_quat[inverse]
+        return ReferenceSequence(times, pos, quat)
+
 
 class ReferenceBuffer:
     """Timestamped append/replan buffer; shared by baseline and corrected methods."""
@@ -89,7 +111,8 @@ class ReferenceBuffer:
                                           np.concatenate((old.body_quat[keep], chunk.body_quat)))
 
     def sample(self, now, count, dt):
-        if count < 2 or dt <= 0:
+        if (not isinstance(count, (int, np.integer)) or count < 2
+                or not np.isfinite(now) or not np.isfinite(dt) or dt <= 0):
             raise ValueError("Need at least two samples and positive dt")
         try:
             if self.sequence is None:

@@ -61,11 +61,13 @@ if [[ "${MUJOCO_VNC:-0}" == "1" ]]; then
   )
 fi
 
+# Keep OpenMP registration memory isolated across containers with their own PID
+# namespaces. Private IPC also makes the configured /dev/shm size take effect.
 exec docker run --rm "${tty_flags[@]}" \
   "${network_flags[@]}" \
   --runtime=mthreads \
   --shm-size="${MUSA_SHM_SIZE:-16g}" \
-  --ipc=host \
+  --ipc="${MUSA_IPC_MODE:-private}" \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
   "${display_flags[@]}" \

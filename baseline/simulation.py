@@ -12,159 +12,11 @@ from baseline.adapters.joints import ISAACLAB_JOINT_NAMES
 from baseline.adapters.reference import BufferUnderrun, ReferenceBuffer, ReferenceSequence
 from baseline.common import sha256
 from baseline.sonic_policy import SonicPolicy
+from baseline.rollout import RolloutRecorder
 
 
 class SimulationStop(RuntimeError):
     pass
-
-
-class StateVideoWriter:
-    """Write a display-free MuJoCo G1 mesh reconstruction as MP4.
-
-    MuJoCo's RGB renderer needs an EGL/OSMesa/GLX library, which is not present
-    in the vendor image. This recorder still uses MuJoCo's computed geom poses
-    and loaded G1 mesh vertices after every control step and produces a
-    deterministic diagnostic video.
-    """
-
-    def __init__(self, model, path, *, fps=25, width=640, height=480):
-        from PIL import Image, ImageDraw
-        import imageio_ffmpeg
-        import subprocess
-
-        self.Image = Image
-        self.ImageDraw = ImageDraw
-        self.model = model
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        if self.path.exists():
-            raise FileExistsError(f"Refusing to overwrite existing video: {self.path}")
-        self.fps = int(fps)
-        self.width = int(width)
-        self.height = int(height)
-        self.stride = max(1, int(round(50 / self.fps)))
-        self.frames = 0
-        self.first_sim_time = None
-        self.last_sim_time = None
-        self.closed = False
-        self.error = None
-        self._mesh_samples = {}
-        for mesh_id in range(model.nmesh):
-            start = int(model.mesh_vertadr[mesh_id])
-            count = int(model.mesh_vertnum[mesh_id])
-            vertices = np.asarray(model.mesh_vert[start:start + count], dtype=np.float32)
-            sample = np.linspace(0, count - 1, min(count, 250), dtype=np.int32)
-            self._mesh_samples[mesh_id] = vertices[sample]
-        self._mesh_geoms = [
-            geom for geom in range(model.ngeom)
-            if int(model.geom_type[geom]) == 7  # mjGEOM_MESH
-            and int(model.geom_group[geom]) == 1  # visual meshes, not collisions
-        ]
-        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-        self._process = subprocess.Popen(
-            [ffmpeg, "-n", "-f", "rawvideo", "-vcodec", "rawvideo",
-             "-s", f"{self.width}x{self.height}", "-pix_fmt", "rgb24",
-             "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264",
-             "-preset", "veryfast", "-crf", "20", "-bf", "0", "-g", str(self.fps),
-             "-fps_mode", "cfr", "-pix_fmt", "yuv420p",
-             str(self.path)], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL)
-
-    def _image(self, data):
-        image = self.Image.new("RGB", (self.width, self.height), (245, 247, 250))
-        draw = self.ImageDraw.Draw(image)
-        root = data.qpos[0:3] if len(data.qpos) >= 3 else np.zeros(3)
-        scale = 235.0
-
-        def project(point):
-            relative = point - root
-            u = self.width * .5 + scale * (relative[0] - .35 * relative[1])
-            v = self.height * .53 - scale * (relative[2] + .15 * relative[1])
-            return int(round(u)), int(round(v))
-
-        floor_y = project(np.array([root[0], root[1], 0.0]))[1]
-        draw.line((0, floor_y, self.width, floor_y), fill=(160, 170, 180), width=2)
-        for offset in np.arange(-1.5, 1.51, .5):
-            x = int(self.width * .5 + scale * offset)
-            draw.line((x, floor_y - 8, x - int(scale * .15), floor_y - 8 - int(scale * .9)),
-                      fill=(220, 225, 230), width=1)
-
-        def hull(points):
-            points = sorted(set(points))
-            if len(points) < 3:
-                return points
-
-            def cross(origin, first, second):
-                return ((first[0] - origin[0]) * (second[1] - origin[1]) -
-                        (first[1] - origin[1]) * (second[0] - origin[0]))
-
-            lower = []
-            for point in points:
-                while len(lower) >= 2 and cross(lower[-2], lower[-1], point) <= 0:
-                    lower.pop()
-                lower.append(point)
-            upper = []
-            for point in reversed(points):
-                while len(upper) >= 2 and cross(upper[-2], upper[-1], point) <= 0:
-                    upper.pop()
-                upper.append(point)
-            return lower[:-1] + upper[:-1]
-
-        polygons = []
-        for geom in self._mesh_geoms:
-            mesh_id = int(self.model.geom_dataid[geom])
-            local = self._mesh_samples[mesh_id]
-            rotation = np.asarray(data.geom_xmat[geom]).reshape(3, 3)
-            world = local @ rotation.T + np.asarray(data.geom_xpos[geom])
-            polygon = hull([project(point) for point in world])
-            if len(polygon) >= 3:
-                depth = float(np.mean(world[:, 1] - .35 * world[:, 0]))
-                color = tuple((self.model.geom_rgba[geom, :3] * 255).astype(np.uint8))
-                polygons.append((depth, polygon, color))
-        for _, polygon, color in sorted(polygons):
-            draw.polygon(polygon, fill=color, outline=(35, 40, 45))
-        draw.text((14, 14), f"MuJoCo G1 mesh reconstruction   t={data.time:7.2f}s",
-                  fill=(25, 30, 35))
-        draw.text((14, 34), "software projection of loaded MuJoCo visual meshes",
-                  fill=(80, 90, 100))
-        return np.asarray(image, dtype=np.uint8)
-
-    def write(self, data, frame_index):
-        if self.closed or frame_index % self.stride:
-            return
-        try:
-            self._process.stdin.write(self._image(data).tobytes())
-            if self.first_sim_time is None:
-                self.first_sim_time = float(data.time)
-            self.last_sim_time = float(data.time)
-            self.frames += 1
-        except (BrokenPipeError, OSError) as error:
-            self.error = f"{type(error).__name__}: {error}"
-            self.close()
-            raise RuntimeError(f"headless video encoder failed: {self.error}") from error
-
-    def close(self):
-        if self.closed:
-            return
-        self.closed = True
-        try:
-            if self._process.stdin:
-                self._process.stdin.close()
-            return_code = self._process.wait(timeout=10)
-            if return_code and self.error is None:
-                self.error = f"ffmpeg exited with status {return_code}"
-        except Exception as error:
-            if self.error is None:
-                self.error = f"{type(error).__name__}: {error}"
-
-    def summary(self):
-        self.close()
-        return {"path": str(self.path), "renderer": "mujoco-mesh-state-reconstruction",
-                "fps": self.fps, "width": self.width, "height": self.height,
-                "frames": self.frames, "first_sim_time": self.first_sim_time,
-                "last_sim_time": self.last_sim_time,
-                "status": "passed" if self.error is None else "failed",
-                **({"error": self.error} if self.error else {})}
 
 
 class SonicSimulation:
@@ -179,7 +31,8 @@ class SonicSimulation:
         self.events = None
         self.trajectory_file = None
         self.trajectory = None
-        self.video = None
+        self.recording = None
+        self.video_path = None
         self.viewer = None
         root = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "floating_base_joint")
         if root < 0 or self.model.jnt_type[root] != mujoco.mjtJoint.mjJNT_FREE:
@@ -250,7 +103,7 @@ class SonicSimulation:
                                  [f"q:{n}" for n in ISAACLAB_JOINT_NAMES] +
                                  [f"ref:{n}" for n in ISAACLAB_JOINT_NAMES] +
                                  [f"torque:{n}" for n in ISAACLAB_JOINT_NAMES])
-        self.video = StateVideoWriter(self.model, video_path) if video_path else None
+        self.video_path = Path(video_path) if video_path else None
         self.started = time.perf_counter()
         self.latencies = []
         self.tracking_errors = []
@@ -259,11 +112,14 @@ class SonicSimulation:
         self.reset_count = 0
         self.frame_index = 0
         self.reset()
+        self.recording = RolloutRecorder(self.model, self.output, scene=self.scene)
+        self.recording.record(self.data, -1, time.perf_counter() - self.started)
 
     def end_run(self):
-        if self.video is not None:
-            self.video.close()
-            self.video = None
+        if self.recording is not None:
+            self.recording.close()
+            self.recording = None
+        self.video_path = None
         if self.events is not None:
             self.events.close()
             self.events = None
@@ -281,6 +137,8 @@ class SonicSimulation:
         self.viewer.sync()
 
     def reset(self):
+        if self.recording is not None:
+            raise RuntimeError("End the recorded episode before resetting simulation time")
         mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[self.q_indices] = self.policy.parameters.default
         self.data.qpos[self.finger_q] = self.finger_target
@@ -300,6 +158,7 @@ class SonicSimulation:
         self.current_quat = self.data.qpos[self.root_q + 3:self.root_q + 7].copy()
         self.end_time = 0.0
         self.holding = True
+        self.terminal_hold_logged = False
         self.pose_history = deque(maxlen=200)
         self.reset_count += 1
         self.event("reset", reset_index=self.reset_count)
@@ -334,13 +193,16 @@ class SonicSimulation:
     @staticmethod
     def load_reference(path):
         """Load an ARDY-exported 50 Hz reference with its explicit schema."""
-        data = np.load(path)
-        names = tuple(str(x) for x in data["joint_names"].tolist())
-        if names != tuple(ISAACLAB_JOINT_NAMES):
-            raise ValueError("Reference joint_names must be the verified ISAACLAB order")
-        if int(data["fps"]) != 50:
-            raise ValueError("SONIC references must be sampled at 50 Hz")
-        return ReferenceSequence(data["times"], data["joint_pos"], data["body_quat"])
+        with np.load(path, allow_pickle=False) as data:
+            names = tuple(str(x) for x in data["joint_names"].tolist())
+            if names != tuple(ISAACLAB_JOINT_NAMES):
+                raise ValueError("Reference joint_names must be the verified ISAACLAB order")
+            if float(data["fps"]) != 50:
+                raise ValueError("SONIC references must be sampled at 50 Hz")
+            reference = ReferenceSequence(data["times"], data["joint_pos"], data["body_quat"])
+        if not np.allclose(np.diff(reference.times), .02, atol=1e-6, rtol=0):
+            raise ValueError("Reference timestamps must match the declared 50 Hz rate")
+        return reference
 
     def validate_reference(self, reference):
         lower, upper = self.ranges.T
@@ -368,35 +230,38 @@ class SonicSimulation:
                                      np.concatenate([prefix.body_quat, reference.body_quat]))
         self.buffer = ReferenceBuffer(max_gap=.021)
         self.buffer.push(sequence)
-        self.velocities = sequence.velocities()
         self.end_time = float(sequence.times[-1])
         self.holding = False
+        self.terminal_hold_logged = False
         self.policy.align(self.data.qpos[self.root_q + 3:self.root_q + 7], sequence.body_quat[0])
         self.event("reference_installed", frames=len(sequence.times), end_time=self.end_time,
                    transition_seconds=n * .02)
 
     def lookahead(self):
-        times = self.data.time + np.arange(10) * self.policy.future_step * .02
+        count = self.policy.future_count
+        times = self.data.time + np.arange(count) * self.policy.future_step * .02
         sequence = self.buffer.sequence
         if sequence is None or self.data.time > self.end_time + 1e-8:
+            if sequence is not None:
+                # The final control tick can land just beyond the clip endpoint.
+                # Hold the actual endpoint, not the previous tick's reference.
+                self.current_ref = sequence.joint_pos[-1].copy()
+                self.current_quat = sequence.body_quat[-1].copy()
             if not self.holding:
                 self.buffer.underruns += 1
                 self.holding = True
                 self.event("buffer_underrun", behavior="hold_terminal_nominal_pose")
-            return (np.repeat(self.current_ref[None], 10, axis=0), np.zeros((10, 29)),
-                    np.repeat(self.current_quat[None], 10, axis=0))
+            return (np.repeat(self.current_ref[None], count, axis=0), np.zeros((count, 29)),
+                    np.repeat(self.current_quat[None], count, axis=0))
         # Future samples outside a completed finite clip explicitly hold its endpoint.
-        clipped = np.minimum(times, self.end_time)
-        unique, inverse = np.unique(clipped, return_inverse=True)
-        if len(unique) == 1:
-            p = np.repeat(sequence.joint_pos[-1:], 10, axis=0)
-            q = np.repeat(sequence.body_quat[-1:], 10, axis=0)
-        else:
-            sampled = sequence.sample(unique)
-            p, q = sampled.joint_pos[inverse], sampled.body_quat[inverse]
-        v = np.stack([np.interp(clipped, sequence.times, self.velocities[:, j])
-                      for j in range(29)], axis=-1)
-        v[times > self.end_time] = 0
+        if times[-1] > self.end_time + 1e-8 and not self.terminal_hold_logged:
+            self.event("reference_terminal_hold", buffered_end=self.end_time,
+                       requested_end=float(times[-1]), behavior="hold_terminal_nominal_pose")
+            self.terminal_hold_logged = True
+        sampled = sequence.sample_with_terminal_hold(times)
+        p, q = sampled.joint_pos, sampled.body_quat
+        v = sampled.velocities()
+        v[times >= self.end_time - 1e-8] = 0
         self.current_ref, self.current_quat = p[0].copy(), q[0].copy()
         return p, v, q
 
@@ -439,8 +304,8 @@ class SonicSimulation:
                                      self.data.qpos[self.root_q:self.root_q + 7].tolist() +
                                      self.data.qpos[self.q_indices].tolist() + p[0].tolist() +
                                      self.data.ctrl[self.actuators].tolist())
-        if self.video:
-            self.video.write(self.data, self.frame_index)
+        if self.recording is not None:
+            self.recording.record(self.data, self.frame_index, time.perf_counter() - self.started)
         self.frame_index += 1
         self.sync_viewer()
         elapsed = time.perf_counter() - start
@@ -455,13 +320,15 @@ class SonicSimulation:
                 "frames": self.frame_index, "simulation_seconds": float(self.data.time),
                 "wall_seconds": time.perf_counter() - self.started,
                 "control_deadline_misses": self.deadline_misses,
+                "buffer_underruns": self.buffer.underruns,
                 "target_limit_clamps": self.limit_clamps,
                 "tracking_joint_rmse_rad": float(np.mean(self.tracking_errors)) if self.tracking_errors else None,
                 "sonic_latency_ms_p50": float(np.percentile(self.latencies, 50)) if self.latencies else None,
                 "sonic_latency_ms_p95": float(np.percentile(self.latencies, 95)) if self.latencies else None,
                 "sonic_source": self.policy.source_commit, "sonic_manifest_sha256": self.policy.asset_hash,
                 "scene_sha256": sha256(self.scene),
-                "video": self.video.summary() if self.video else None}
+                "rollout": self.recording.summary() if self.recording else None,
+                "video": None}
 
     def close(self):
         if self.viewer is not None:

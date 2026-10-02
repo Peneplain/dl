@@ -31,6 +31,23 @@ ENV MUJOCO_GUI_ROOT=/opt/mujoco-gui-root \
 ENTRYPOINT []
 CMD ["/bin/bash"]
 
+# Optional display-free software renderer. Extract libraries separately so the
+# vendor torch/torch_musa installation and graphics libraries stay intact.
+FROM common AS render
+
+RUN apt-get update \
+    && apt-get install --download-only -y --no-install-recommends libosmesa6 \
+    && mkdir -p /opt/mujoco-render-root \
+    && find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -print0 \
+        | xargs -0 -r -I '{}' dpkg-deb -x '{}' /opt/mujoco-render-root \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
+
+ENV MUJOCO_GL=osmesa \
+    LD_LIBRARY_PATH=/opt/mujoco-render-root/usr/lib/x86_64-linux-gnu:/opt/mujoco-render-root/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}
+
+ENTRYPOINT []
+CMD ["/bin/bash"]
+
 # Keep the ordinary build headless; select the optional desktop explicitly.
 FROM common AS runtime
 

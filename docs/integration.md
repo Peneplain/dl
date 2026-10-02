@@ -109,6 +109,12 @@ The current standing/arm-motion executor is `scripts/run_live.py`. It:
 `ReferenceBuffer`, the ONNX observation adapter, MuJoCo executor and rollout
 logger are available in `baseline/`. The tabletop scene, task sequencer,
 clearance/collision policy and contact hand state machine are still pending.
+The logger saves full MuJoCo state at 50 Hz plus a compiled scene under
+`rollout/`. The separate `scripts/render_expert_rollout.py` restores frames
+without advancing physics, producing camera RGB in `vision/images.npz` and
+optional MP4. The default camera is fixed third-person; named cameras from the
+recorded scene can provide future head/wrist views. These images are recording
+outputs and do not change the privileged-state inference interfaces.
 Additional body orientations or positions, if supplied, must be consistent with
 joint references.
 

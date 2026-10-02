@@ -99,6 +99,18 @@ The parser, constraints, and grasp logic will be documented, so language
 performance is attributed to the complete pipeline. ARDY receives text,
 pose history, and constraints; camera perception is deferred.
 
+\textbf{State recording and offline visualization.}
+Save the initial state and full MuJoCo robot, hand, and object state at every
+50\,Hz control frame, together with a versioned compiled scene snapshot.
+Offline rendering restores each saved state and recomputes derived geometry,
+without stepping physics or running a policy. Use a fixed third-person camera
+initially; body-attached head/wrist cameras can be added later. Store RGB arrays
+with camera names, simulation timestamps, and control-frame indices in
+\texttt{vision/images.npz}, and optionally encode a video by simulation time.
+Rendered images serve visualization and recording, not core inference inputs.
+Visual replay snapshots do not replace the controller, buffer, and random-state
+checkpoints required for counterfactual branches.
+
 The adapter will use SONIC's joint-based streaming interface \cite{sonicstream}:
 29 body-joint positions/velocities in the required order, body orientation,
 and aligned frame indices. We will pin one matching encoder/decoder/config

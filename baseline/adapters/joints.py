@@ -18,6 +18,14 @@ ISAACLAB_JOINT_NAMES = (
     "left_wrist_yaw_joint", "right_wrist_yaw_joint",
 )
 
+# Explicit anatomical membership; never infer arm coordinates from contiguous slices.
+ARM_JOINT_NAMES = tuple(
+    f"{side}_{joint}_joint" for side in ("left", "right")
+    for joint in ("shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow",
+                  "wrist_roll", "wrist_pitch", "wrist_yaw")
+)
+ARM_INDICES = tuple(ISAACLAB_JOINT_NAMES.index(name) for name in ARM_JOINT_NAMES)
+
 
 def to_isaaclab(values: np.ndarray, source_names: list[str] | tuple[str, ...]) -> np.ndarray:
     """Reorder by explicit names, never assume the order of a CSV/qpos array."""

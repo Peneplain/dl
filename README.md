@@ -7,7 +7,7 @@ by predictive risk and arm-reference residuals, entirely in G1 simulation.
 The full research scope is described in the [proposal](docs/proposal.pdf)
 ([LaTeX source](docs/proposal.tex)).
 
-[Setup and commands](docs/baseline.md) · [Integration notes](docs/integration.md) ·
+[Run commands](docs/commands.md) · [Setup details](docs/baseline.md) · [Integration notes](docs/integration.md) ·
 [Verification](docs/verification.md)
 
 ## Architecture
@@ -137,8 +137,12 @@ The repository provides the B0 setup and inference path: pinned model
 downloads, local LLM2Vec loading, ARDY motion generation, a verified SONIC
 observation adapter and a free-base MuJoCo control loop. `scripts/run_live.py`
 accepts text commands in the same process, generates ARDY references in the
-background, installs them into the 50 Hz SONIC buffer and can write a
-display-free G1 mesh-state-reconstruction MP4. An optional GUI target in the
+background and installs them into the 50 Hz SONIC buffer. Every run saves the
+initial state, full MuJoCo state at each control frame and a compiled scene.
+`scripts/render_expert_rollout.py` restores those states with MuJoCo Renderer
+to produce camera RGB in `vision/images.npz` and optional MP4. The default
+camera is a fixed third-person view; recorded MJCF camera names also work.
+`run_live.py --video` runs this rendering stage after execution. An optional GUI target in the
 MUSA Dockerfile provides a persistent software-GLX MuJoCo viewer over an
 SSH-tunneled VNC connection. The Mac client has displayed the viewer; prompt
 tracking and grasp success are separate checks. The tabletop task and contact
@@ -152,65 +156,18 @@ can reuse the baseline; `baseline/` must not depend on them.
 
 ## Run on S4000
 
-Use the matched vendor `torch`/`torch_musa` environment. The supplied Dockerfile
-uses `registry.mthreads.com/mcconline/musa-pytorch-release-public:rc5.1.0-v2.9.1-S4000-py310`.
-If the image already exists, enter it directly:
-
-```bash
-./docker/run-musa.sh bash
-```
-
-Otherwise, build it first:
-
-```bash
-docker build -f Dockerfile.musa -t dl-musa:latest .
-```
-
-The host needs the MUSA container toolkit registered with Docker. On a host where
-the toolkit is installed, an administrator can register it with:
-
-```bash
-sudo /usr/bin/musa/docker setup /usr/bin/musa
-sudo systemctl restart docker
-```
-
-Set `MUSA_IMAGE` to use another compatible image, or
-`MTHREADS_VISIBLE_DEVICES=0` to select one S4000. Inside the container:
-
-The launcher selects the existing `.venv-baseline-musa` through the container
-PATH. Create it only for the first setup; in an already-open container, activate
-it with `source .venv-baseline-musa/bin/activate`.
-
-```bash
-# The vendor image omits ensurepip; use its installed virtualenv tool.
-python -m virtualenv --system-site-packages .venv-baseline-musa
-source .venv-baseline-musa/bin/activate
-bash scripts/install_baseline.sh
-python scripts/fetch_baseline.py --only sonic
-python scripts/check_sonic_onnx.py --out artifacts/sonic-cpu-01
-```
-
-If the host has an SSH X11 `DISPLAY` (for example, `localhost:10.0`), the
-launcher forwards it and the matching Xauthority cookie automatically. A
-headless run needs no display; use SONIC's `--no-enable-onscreen` option.
-
-Continue with ARDY and LLM2Vec downloads using the [setup guide](docs/baseline.md).
-The installer puts the SONIC simulation package and ARDY requirements into the
-same environment while preserving the vendor MUSA torch pair.
+Run all host-side workflows through [commands.md](docs/commands.md), which uses
+the single `./run.sh` entry point for setup, checks, execution, camera rendering,
+interactive prompts, conversion and packaging. This selects the rendering image
+and the existing environment while preserving the vendor `torch`/`torch_musa`
+pair. See [baseline.md](docs/baseline.md) for dependency, asset and model details.
 
 ## Local checks
 
-```bash
-python -m unittest discover -s tests -v
-python scripts/check_backend.py --device cpu
-python scripts/smoke.py --out artifacts/baseline-smoke-01
-```
-
-`check_backend.py` checks inference primitives without loading either model.
-`smoke.py` checks joint ordering, resampling and SONIC packet fields with a
-synthetic reference. Neither command runs training or robot physics. Use a new
-output directory for each run. Check MUSA on the target machine with
-`python scripts/check_backend.py --device musa`, then run the actual model checks.
+Use `./run.sh check`, `./run.sh tests` and `./run.sh smoke --out
+artifacts/smoke-01`; the [command guide](docs/commands.md) documents these
+checks and what each one establishes. Smoke data and operator tests do not
+prove model compatibility or physical grasp success.
 
 ## Repository layout
 
@@ -220,6 +177,8 @@ baseline/
   text_encoder.py   Local Llama backbone and two frozen LLM2Vec adapters
   llama.py          Bidirectional attention compatibility
   adapters/         G1 joint order, reference resampling and SONIC packets
+  rollout.py        Complete simulation-state and compiled-scene recording
+  rendering.py      Offline MuJoCo camera RGB and MP4 rendering
 configs/
   baseline.lock.json
 scripts/            Baseline installation, downloads, inference and checks

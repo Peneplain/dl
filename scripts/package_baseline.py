@@ -8,14 +8,15 @@ import tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TOP_FILES = {"AGENTS.md", "README.md", "Dockerfile.musa", ".gitignore", ".dockerignore",
+TOP_FILES = {"AGENTS.md", "README.md", "run.sh", "Dockerfile.musa", ".gitignore", ".dockerignore",
              "pyproject.toml", "requirements-musa.txt", "requirements-cpu.txt",
              "requirements-baseline.txt", "requirements-sonic-sim.txt", "configs/baseline.lock.json",
-             "docs/baseline.md", "docs/integration.md", "docs/verification.md",
+             "docs/baseline.md", "docs/commands.md", "docs/integration.md", "docs/verification.md",
              "docs/proposal.tex", "scripts/check_backend.py", "scripts/check_baseline.py", "scripts/check_sonic_onnx.py",
              "scripts/fetch_baseline.py", "scripts/install_baseline.sh",
              "scripts/package_baseline.py", "scripts/prepare_reference.py",
              "scripts/prepare_deploy_motion.py",
+             "scripts/render_expert_rollout.py",
              "scripts/run_ardy.py", "scripts/ardy_service.py", "scripts/run_live.py", "scripts/smoke.py"}
 SOURCE_DIRS = {"baseline", "docker", "tests"}
 SUFFIXES = {".py", ".sh", ".yaml", ".yml", ".json", ".md", ".tex"}
