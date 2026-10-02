@@ -7,7 +7,7 @@ __pycache__/
 .ruff_cache/
 .DS_Store
 MUJOCO_LOG.TXT
-artifacts/
+output/
 datasets/
 checkpoints/
 third_party/
@@ -24,7 +24,9 @@ wandb/
 /sonic-offline-*.tar.gz
 /sonic-offline-*.tar.gz.sha256
 /sonic-wheels/
-/docs/verification.md
 .env
 .env.*
 !.env.example
+
+# Outputs
+/output/

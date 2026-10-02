@@ -17,8 +17,9 @@ Run these commands from the server host in ~/dl:
   check       Verify local assets, sources and MUSA operators
   tests       Run all tests, including actual RGB/MP4 rendering
   smoke       Check synthetic reference conversion (--out required)
-  live        Text/reference -> SONIC -> simulation (run_live.py arguments)
-  render      Replay recorded states (render_expert_rollout.py arguments)
+  batch       Collect attempts; --batch N (default 1), --grasp enables block task
+  manual      Enter prompt JSON one attempt at a time; optional --gui / --grasp
+  render      Render selected attempts or --all after collection
   ardy        Generate a reference only (run_ardy.py arguments)
   service     Keep ARDY loaded for JSONL requests (ardy_service.py arguments)
   sonic       Probe frozen SONIC ONNX graphs (--out required)
@@ -26,28 +27,33 @@ Run these commands from the server host in ~/dl:
   convert     Convert a motion CSV (prepare_reference.py arguments)
   deploy      Export deploy motion CSVs (prepare_deploy_motion.py arguments)
   package     Create a baseline source archive (--out required)
-  gui         Start the interactive MuJoCo viewer and VNC
   build       Build the offline RGB image
   build-gui   Build the GUI image
   build-base  Build the control-only image
 
 The default image is dl-musa-render:latest; override MUSA_IMAGE if needed.
-Every run/render output must be fresh. See docs/commands.md for examples.
+Sessions use output/batch-TIME or output/manual-TIME. See docs/commands.md.
 EOF
     exit 0
     ;;
   build) exec docker build --target render -f Dockerfile.musa -t dl-musa-render:latest "$@" . ;;
   build-gui) exec docker build --target gui -f Dockerfile.musa -t dl-musa-gui:latest "$@" . ;;
   build-base) exec docker build -f Dockerfile.musa -t dl-musa:latest "$@" . ;;
-  gui) exec "$repo_root/docker/run-mujoco-gui.sh" "$@" ;;
   shell) invocation=(bash "$@") ;;
   check)
     invocation=(bash -c 'python scripts/check_baseline.py --device musa && python scripts/check_backend.py --device musa' "$@")
     ;;
   tests) invocation=(env RUN_MUJOCO_RENDER_TESTS=1 python -m unittest discover -s tests -v "$@") ;;
   smoke) script=smoke.py ;;
-  live) script=run_live.py ;;
-  render) script=render_expert_rollout.py ;;
+  batch|manual)
+    invocation=(python scripts/run.py "$command" "$@")
+    if [[ "$command" == manual && " $* " == *" --gui "* ]]; then
+      export MUSA_IMAGE="${MUSA_IMAGE:-dl-musa-gui:latest}"
+      export MUJOCO_VNC=1
+      invocation=(/workspace/dl/docker/start-mujoco-vnc.sh "${invocation[@]}")
+    fi
+    ;;
+  render) script=render.py ;;
   ardy)
     invocation=(python scripts/run_ardy.py --device musa --text-device musa --text-dtype bfloat16 "$@")
     ;;

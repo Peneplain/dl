@@ -23,6 +23,18 @@ from baseline.common import LOCK, ROOT, checked_checkout, sha256, verify_assets,
 from baseline.runtime import device_for, synchronize
 
 
+class _TorsoRotationConstraint:
+    """Use the pinned conditioning protocol for one named torso orientation."""
+
+    def __init__(self, frame_indices, joint_index, rotations, torch):
+        self.indices = torch.stack([frame_indices, torch.full_like(frame_indices, joint_index)], dim=-1)
+        self.rotations = rotations
+
+    def update_constraints(self, data_dict, index_dict):
+        data_dict["global_joints_rots"].append(self.rotations)
+        index_dict["global_joints_rots"].append(self.indices)
+
+
 class ArdyService:
     def __init__(self, args):
         import torch
@@ -108,7 +120,101 @@ class ArdyService:
                                      torch.tensor(root[None], dtype=torch.float32, device=self.device),
                                      to_normalize=True)
 
-    def generate(self, prompt, duration, seed, output, history_qpos=None):
+    def pose_conditions(self, constraints, frames, history_count):
+        """Map world wrist/standing goals into the pinned ARDY constraint API."""
+        from ardy.constraints import EndEffectorConstraintSet, Root2DConstraintSet
+
+        torch = self.torch
+        if (constraints.get("schema_version") != 1
+                or constraints.get("coordinate_frame") != "mujoco_world"
+                or constraints.get("units") != "SI"):
+            raise ValueError("Unsupported pose constraint schema/frame/units")
+        indices = np.asarray(constraints["frame_indices"])
+        if (indices.ndim != 1 or indices.dtype.kind not in "iu" or len(indices) < 1
+                or (np.diff(indices) <= 0).any() or indices[0] < 0 or indices[-1] >= frames):
+            raise ValueError("Invalid pose constraint frame indices")
+        if constraints.get("kind") == "root_path":
+            xy = np.asarray(constraints["root_positions_xy"], dtype=np.float32)
+            angles = np.asarray(constraints["root_heading_rad"], dtype=np.float32)
+            if (xy.shape != (len(indices), 2) or angles.shape != (len(indices),)
+                    or not np.isfinite(xy).all() or not np.isfinite(angles).all()):
+                raise ValueError("Invalid root path dimensions or values")
+            coordinate = self.converter.mujoco_to_ardy_matrix.to(self.device)
+            world = torch.as_tensor(np.c_[xy, np.zeros(len(xy))], dtype=torch.float32, device=self.device)
+            direction = torch.as_tensor(np.c_[np.cos(angles), np.sin(angles), np.zeros(len(xy))],
+                                        dtype=torch.float32, device=self.device) @ coordinate.T
+            constraint = Root2DConstraintSet(
+                self.model.skeleton, torch.as_tensor(indices + history_count),
+                (world @ coordinate.T)[:, [0, 2]], torch.atan2(direction[:, 0], direction[:, 2]))
+            observed, mask = self.model.motion_rep.create_conditions_from_constraints(
+                [constraint], length=frames + history_count, to_normalize=True, device=self.device)
+            return observed[None], mask[None]
+        if constraints.get("kind", "wrist") != "wrist":
+            raise ValueError("Unsupported pose constraint kind")
+        positions = np.asarray(constraints["wrist_positions"], dtype=np.float32)
+        standing = np.asarray(constraints["standing_qpos"], dtype=np.float32)
+        desired_rot = np.asarray(constraints.get("wrist_rotations", constraints.get("wrist_rotation")),
+                                 dtype=np.float32)
+        anchor_rot = np.asarray(constraints["standing_wrist_rotation"], dtype=np.float32)
+        if (indices.ndim != 1 or indices.dtype.kind not in "iu" or len(indices) < 1
+                or (np.diff(indices) <= 0).any() or indices[0] < 0 or indices[-1] >= frames
+                or positions.shape != (len(indices), 3) or standing.shape != (36,)
+                or not np.isfinite(positions).all() or not np.isfinite(standing).all()):
+            raise ValueError("Invalid pose constraint dimensions/frame indices")
+        if desired_rot.shape not in {(3, 3), (len(indices), 3, 3)} or anchor_rot.shape != (3, 3):
+            raise ValueError("Pose constraint rotation dimensions mismatch")
+        for rotation_matrix in (desired_rot, anchor_rot):
+            if (not np.isfinite(rotation_matrix).all()
+                    or not np.allclose(np.swapaxes(rotation_matrix, -1, -2) @ rotation_matrix,
+                                       np.eye(3), atol=1e-5)
+                    or not np.allclose(np.linalg.det(rotation_matrix), 1, atol=1e-5)):
+                raise ValueError("Pose constraint rotations must be proper 3x3 matrices")
+        with torch.no_grad():
+            template = self.model.motion_rep.inverse(
+                self.history_features(np.repeat(standing[None], 4, axis=0)), is_normalized=True)
+        skeleton = self.model.skeleton
+        wrist = skeleton.bone_index["right_wrist_yaw_skel"]
+        joint_pos = template["posed_joints"][0, -1:].repeat(len(indices), 1, 1).clone()
+        joint_rot = template["global_rot_mats"][0, -1:].repeat(len(indices), 1, 1, 1).clone()
+        coordinate = self.converter.mujoco_to_ardy_matrix.to(self.device)
+        joint_pos[:, wrist] = torch.as_tensor(positions, device=self.device) @ coordinate.T
+        # Apply a world-space rotation delta to preserve the skeleton's static
+        # wrist frame offsets rather than treating them as MuJoCo body frames.
+        delta = torch.as_tensor(desired_rot @ anchor_rot.T, device=self.device)
+        skeleton_delta = coordinate @ delta @ coordinate.T
+        joint_rot[:, wrist] = skeleton_delta @ joint_rot[:, wrist]
+        # ARDY's RightHand alias constrains both wrist and its virtual endpoint.
+        # Move the endpoint rigidly with the wrist; leaving it at the standing
+        # pose would ask the generator to satisfy inconsistent hand geometry.
+        for name in skeleton.right_hand_joint_names[1:]:
+            endpoint = skeleton.bone_index[name]
+            offset = (template["posed_joints"][0, -1, endpoint] -
+                      template["posed_joints"][0, -1, wrist])
+            joint_pos[:, endpoint] = joint_pos[:, wrist] + (skeleton_delta @ offset[..., None])[..., 0]
+        constraint = EndEffectorConstraintSet(
+            skeleton, torch.as_tensor(indices + history_count), joint_pos, joint_rot, None,
+            joint_names=["RightHand", "LeftHand", "LeftFoot", "RightFoot", "Hips"])
+        constraint_sets = [constraint]
+        if "torso_pitch_rad" in constraints:
+            pitches = np.asarray(constraints["torso_pitch_rad"], dtype=np.float32)
+            if pitches.shape != (len(indices),) or not np.isfinite(pitches).all() or (np.abs(pitches) > .52).any():
+                raise ValueError("Invalid torso pitch goals: expected one bounded radian value per frame")
+            # FK through the exact joint-name converter preserves static skeleton
+            # frame offsets. Pad only for motion_rep's multiple-of-four contract.
+            poses = np.repeat(standing[None], ((len(indices) + 3) // 4) * 4, axis=0)
+            poses[:, 7 + ISAACLAB_JOINT_NAMES.index("waist_pitch_joint")] = np.pad(
+                pitches, (0, len(poses) - len(pitches)), mode="edge")
+            with torch.no_grad():
+                posture = self.model.motion_rep.inverse(self.history_features(poses), is_normalized=True)
+            torso = skeleton.bone_index["waist_pitch_skel"]
+            constraint_sets.append(_TorsoRotationConstraint(
+                torch.as_tensor(indices + history_count), torso,
+                posture["global_rot_mats"][0, :len(indices), torso], torch))
+        observed, mask = self.model.motion_rep.create_conditions_from_constraints(
+            constraint_sets, length=frames + history_count, to_normalize=True, device=self.device)
+        return observed[None], mask[None]
+
+    def generate(self, prompt, duration, seed, output, history_qpos=None, pose_constraints=None):
         import torch
 
         from ardy.motion_rep.tools import length_to_mask
@@ -151,6 +257,17 @@ class ArdyService:
             init_history = None if history_qpos is None else self.history_features(history_qpos)
             history_count = 0 if init_history is None else init_history.shape[1]
             total_frames = frames + history_count
+            observed, mask = None, None
+            if pose_constraints is not None:
+                if history_qpos is None:
+                    raise ValueError("Pose-constrained generation requires measured pose history")
+                report["stage"] = "pose_constraints"
+                observed, mask = self.pose_conditions(pose_constraints, frames, history_count)
+                write_json(output / "pose_constraints.json", pose_constraints)
+                np.savez_compressed(output / "pose_conditions.npz",
+                                    observed_motion=observed.cpu().numpy(),
+                                    motion_mask=mask.cpu().numpy())
+                report["pose_constraints"] = True
             if history_qpos is not None:
                 np.savez_compressed(output / "executed_history.npz", qpos=history_qpos,
                                     joint_names=np.array(ISAACLAB_JOINT_NAMES), fps=25)
@@ -168,11 +285,12 @@ class ArdyService:
                     [prompt], total_frames, num_denoising_steps=self.steps,
                     pad_mask=length_to_mask(motion_lengths),
                     first_heading_angle=None if init_history is not None else torch.zeros(1, device=self.device),
-                    motion_mask=None, observed_motion=None,
+                    motion_mask=mask, observed_motion=observed,
                     cfg_weight=(2.0, 2.0), crop_history_length=None if init_history is not None else history,
                     init_history_sequence=init_history,
                     text_feat=features,
                     text_pad_mask=torch.ones(1, 1, dtype=torch.bool, device=self.device),
+                    progress_bar=lambda iterable: iterable,
                 )
                 output_motion = to_numpy(self.model.motion_rep.inverse(motion, is_normalized=True))
             synchronize(self.device)
@@ -206,4 +324,3 @@ class ArdyService:
         finally:
             write_json(output / "report.json", report)
         return report
-

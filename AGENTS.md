@@ -1,3 +1,13 @@
+# Language
+
+Write all project content in English. This includes documentation, code comments,
+docstrings, prompts, CLI and GUI messages, generated summaries and reports, test
+fixtures, and filenames. User-facing conversation may be in Chinese when requested.
+Translate existing
+Chinese project text when editing it. Keep upstream dependencies, model assets,
+and immutable experiment measurements intact; translate presentation text
+without changing recorded results or provenance.
+
 # Project specification
 
 `docs/proposal.tex` is the source of truth for research scope, architecture,
@@ -114,7 +124,7 @@ Run checks appropriate to the changed interface and record what they establish.
 Documentation-only edits need consistency and formatting checks, not model runs.
 
 - After reference or checkpoint-interface changes, run
-  `python scripts/smoke.py --out artifacts/<fresh-run>` and the relevant tests.
+  `python scripts/smoke.py --out output/<fresh-run>` and the relevant tests.
   The smoke check uses synthetic references and packet conversion; it is not
   evidence of model compatibility or grasp success.
 - Use `python scripts/check_baseline.py --device musa` to check dependencies,

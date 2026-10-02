@@ -10,8 +10,11 @@ its boundaries; it is not a second command list.
 
 B0 combines the pinned `ARDY-G1-RP-25FPS-Horizon8` generator, frozen SONIC
 ONNX policy and a free-base G1 MuJoCo scene. The verified executor supports
-standing and arm-motion bring-up. Tabletop task sequencing, object grounding,
-collision/clearance policy, grasp state machine, contact-verified block lifting,
+standing and arm-motion bring-up. The [B0 grasp collector](grasp.md) adds a
+pilot table/block scene, GT grounding, a farther initial position, root-path
+approach and settling checks, right-hand phases, spatial constraints, fingers,
+collision stops and episode statistics. Successful
+contact grasp/lift and calibrated clearance settings remain unverified.
 Risk/Residual models and their training pipeline are not implemented yet.
 
 All task data and future demonstrations are simulation-only. Risk/Residual
@@ -99,12 +102,13 @@ The offline renderer loads the compiled scene, verifies hashes and MuJoCo
 version, restores each frame, calls `mj_forward` to update derived geometry,
 then uses `mujoco.Renderer`. It never calls `mj_step` and loads no policy. The
 default camera is fixed in world-space third-person. Named cameras work when
-present in the scene at recording time; the current G1 bring-up scene does not
-yet define head/wrist cameras.
+present in the scene at recording time. The upstream G1 scene defines a head
+camera; the tabletop collector configures head and wrist cameras.
 
 `vision/images.npz` contains uint8 RGB shaped `[N,C,H,W,3]`, camera names,
 simulation timestamps, state indices and original control-frame indices.
-Every saved state gets an image. Optional H.264 MP4 uses the first camera and a
+The CLI defaults to 25 FPS RGB sampling from 50 Hz states; `--fps 50` includes
+every saved state. Optional H.264 MP4 uses the first camera and a
 uniform simulation-time grid, mapping each presentation time to the nearest
 saved state. Video metadata records that mapping. Rendering and encoding wall
 time are separate from simulation time and model latency.
@@ -113,7 +117,7 @@ RGB is atomically published before video encoding. An encoder failure keeps
 the complete RGB archive and rollout while marking `video_status` failed.
 The MP4 is encoded to a temporary file and published only after ffmpeg exits
 successfully. A failed renderer writes its own report and can be retried with
-a new output directory and video path. Large RGB runs need disk space: one
+an automatically timestamped output directory. Large RGB runs need disk space: one
 30-second, 50 Hz, 640x480 camera is about 1.38 GB uncompressed; each additional
 camera adds a similar amount.
 
@@ -128,6 +132,6 @@ remains outside the core study.
 
 Synthetic fixtures validate state restoration, named cameras, timestamps,
 RGB/MP4 generation, failure reports and overwrite protection. Actual checks and
-their limits are recorded in [verification.md](verification.md). The current
-G1 scene supports standing/reference tracking only. A rendered red test block
-in a synthetic fixture does not establish physical G1 contact or grasp success.
+their limits are recorded in [verification.md](verification.md). The optional tabletop task has been physically exercised, including
+collision stops and timeouts, but no successful grasp/lift is established.
+Synthetic rendering fixtures do not establish physical G1 grasp success.

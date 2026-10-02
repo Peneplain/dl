@@ -3,8 +3,8 @@
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
-run_dir="artifacts/baseline-install-$(date +%Y%m%d-%H%M%S)"
-mkdir -p artifacts
+run_dir="output/baseline-install-$(date +%Y%m%d-%H%M%S)"
+mkdir -p output
 mkdir "$run_dir"
 python - "$run_dir/vendor-constraints.txt" <<'PY'
 import importlib.metadata as metadata

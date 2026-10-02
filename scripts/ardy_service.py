@@ -22,7 +22,7 @@ def main():
     parser.add_argument("--text-dtype", choices=["float32", "bfloat16"], default="bfloat16")
     parser.add_argument("--ardy-repo", type=Path, default=ROOT / "third_party/ardy")
     parser.add_argument("--assets", type=Path, default=ROOT / "checkpoints/baseline")
-    parser.add_argument("--out-root", type=Path, default=ROOT / "artifacts/ardy-service")
+    parser.add_argument("--out-root", type=Path, default=ROOT / "output/ardy-service")
     parser.add_argument("--threads", type=int, default=4)
     args = parser.parse_args()
     if args.threads < 1:

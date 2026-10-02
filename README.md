@@ -4,11 +4,10 @@ HKU DASC 7606C Deep Learning · Track 4, Group 3
 
 The project compares a frozen ARDY–SONIC baseline with the same system augmented
 by predictive risk and arm-reference residuals, entirely in G1 simulation.
-The full research scope is described in the [proposal](docs/proposal.pdf)
-([LaTeX source](docs/proposal.tex)).
+The full research scope is described in the [proposal source](docs/proposal.tex).
 
 [Run commands](docs/commands.md) · [Setup details](docs/baseline.md) · [Integration notes](docs/integration.md) ·
-[Verification](docs/verification.md)
+[Verification](docs/verification.md) · [B0 grasp batches](docs/grasp.md)
 
 ## Architecture
 
@@ -133,22 +132,45 @@ prioritize B0, B1, I2 and P and identify any unfinished experiments explicitly.
 
 ## Current implementation
 
-The repository provides the B0 setup and inference path: pinned model
-downloads, local LLM2Vec loading, ARDY motion generation, a verified SONIC
-observation adapter and a free-base MuJoCo control loop. `scripts/run_live.py`
-accepts text commands in the same process, generates ARDY references in the
-background and installs them into the 50 Hz SONIC buffer. Every run saves the
-initial state, full MuJoCo state at each control frame and a compiled scene.
-`scripts/render_expert_rollout.py` restores those states with MuJoCo Renderer
-to produce camera RGB in `vision/images.npz` and optional MP4. The default
-camera is a fixed third-person view; recorded MJCF camera names also work.
-`run_live.py --video` runs this rendering stage after execution. An optional GUI target in the
-MUSA Dockerfile provides a persistent software-GLX MuJoCo viewer over an
-SSH-tunneled VNC connection. The Mac client has displayed the viewer; prompt
-tracking and grasp success are separate checks. The tabletop task and contact
-grasping remain under development, and no grasping success is reported.
-Risk/Residual learning remains separate and planned. See
-[verification.md](docs/verification.md) for actual evidence and limits.
+The implemented B0 path uses pinned ARDY and SONIC with a free-base MuJoCo G1.
+There are two execution modes in `scripts/run.py`: `batch` generates independent
+attempts; `manual` accepts one prompt JSON at a time with an optional persistent
+GUI. Both preload SONIC, ARDY, and the text encoder, then display an explicit
+model-ready banner before accepting or executing prompts. Both use
+`baseline/execution.py`, reset per attempt and save full 50 Hz
+states. Defaults have no prompt or task, only a robot and ground. `--grasp`
+enables the pilot table/block scene, simulator-state grounding, an initial
+backoff, approach, settle, and upper-body preparation, then five hand phases.
+Preparation requests an 8-degree waist inclination because this G1 has a rigid
+head; both feet must settle again before the arm reach. Root paths and wrist
+constraints condition ARDY without camera inputs. Actual arrival and stability
+are checked before reaching; SONIC G1 mode does not directly track global root
+XY. Articulated fingers and physical assessment remain shared. Busy manual
+sessions discard additional input until the current attempt ends.
+
+Sessions are saved as `output/batch-TIME/attempt-00001/` or
+`output/manual-TIME/attempt-00001/`, where TIME is `YYMMDD-HHMMSS` in Asia/Shanghai time, with readable TXT/Markdown summaries,
+CSV results and success/failure lists. Collection never launches a renderer.
+`scripts/render.py` renders selected attempts, all attempts or successes into
+RGB and MP4 afterward, with progress and fresh output directories. The default
+is one third-person camera at 640×480 and 25 FPS, with H.264 CRF 18 encoding; full states remain at 50 Hz.
+A software GLX viewer is available over SSH-tunneled VNC for manual sessions.
+
+The current pilot uses one task instruction with phase-specific text and simulator
+state grounding. Settle, close and hold preserve checked references. A measured
+hand/block alignment gate ends descent before finger closure; the shared
+controller then holds measured posture through frozen SONIC. Initial arms are
+parked behind the table. Default extra backoff is .45 m and final standoff .22 m.
+These are nominal rules shared by all future methods, not learned corrections.
+
+Two isolated ARDY–SONIC hand trials have physically lifted the block and held it
+for more than five continuous seconds, without prohibited contact. Both omitted
+walking, so **complete B0 success has not yet been established**. Complete pilots
+have passed walking/settling/preparation but still failed hand alignment or
+contact. The integrated state sequencer remains a calibration checkpoint.
+Risk/Residual learning remains planned. See
+[verification.md](docs/verification.md) for actual evidence and video links, and
+[prompts.md](docs/prompts.md) for prompt rationale.
 
 The baseline setup and inference scripts run independently of learning code.
 Learned corrections, training and data tooling belong in separate modules that
@@ -162,10 +184,19 @@ interactive prompts, conversion and packaging. This selects the rendering image
 and the existing environment while preserving the vendor `torch`/`torch_musa`
 pair. See [baseline.md](docs/baseline.md) for dependency, asset and model details.
 
+```bash
+./run.sh batch --grasp --batch 20 --seed 42
+./run.sh render --run output/batch-TIME --attempts 1 3
+./run.sh manual --grasp --gui
+```
+
+Omit `--batch` for one attempt, and omit `--grasp` for an empty task. Replace
+`batch-TIME` with the actual directory printed by the command.
+
 ## Local checks
 
 Use `./run.sh check`, `./run.sh tests` and `./run.sh smoke --out
-artifacts/smoke-01`; the [command guide](docs/commands.md) documents these
+output/smoke-01`; the [command guide](docs/commands.md) documents these
 checks and what each one establishes. Smoke data and operator tests do not
 prove model compatibility or physical grasp success.
 
@@ -177,6 +208,10 @@ baseline/
   text_encoder.py   Local Llama backbone and two frozen LLM2Vec adapters
   llama.py          Bidirectional attention compatibility
   adapters/         G1 joint order, reference resampling and SONIC packets
+  grasp.py          Pilot task grounding, spatial goals and physical assessment
+  execution.py      Shared batch/manual frozen-model execution
+  session.py        Immutable plans, resume and readable episode statistics
+  console.py        Manual READY/BUSY input handling
   rollout.py        Complete simulation-state and compiled-scene recording
   rendering.py      Offline MuJoCo camera RGB and MP4 rendering
 configs/
@@ -187,7 +222,7 @@ tests/              Baseline provenance and packaging checks
 docs/               Baseline setup, integration, verification and project proposal
 checkpoints/baseline/ Local frozen model files and manifests (ignored)
 third_party/        Pinned upstream source checkouts (ignored)
-artifacts/          Verification outputs and offline transfer packages (ignored)
+output/             Batch/manual sessions, verification and source archives (ignored)
 ```
 
 Weights, datasets, environments, upstream checkouts and generated artifacts are
@@ -195,16 +230,16 @@ excluded from Git. `scripts/package_baseline.py` uses a baseline file allowlist
 for source archives, so adding an experimental training script does not add it
 to the baseline upload.
 
-Keep offline transfer archives in `artifacts/imports/`. Keep the Llama backbone
-in `checkpoints/baseline/llama_base/`, with its download metadata intact. The
-[local audit](docs/verification.md#september-30-s4000-completeness-audit) lists
-verified assets, missing setup components and the remaining B0 implementation.
+Keep model assets in `checkpoints/baseline/` with their original download
+metadata. Generated outputs stay under `output/`; historical run outputs and
+redundant installer archives were removed during the documented cleanup.
 
 ## Physical acceptance target
 
-First demonstrate free-base standing and tracking of a known reference, followed
-by ARDY standing and arm motion. Then add a table, dynamic block and articulated
-hand with frictional contacts.
+Validation proceeds through free-base standing and known-reference tracking,
+ARDY standing and arm motion, then the pilot table, dynamic block and articulated
+hand with frictional contacts. The new collector needs physical grasp/lift
+acceptance before its settings become the frozen comparison configuration.
 
 A successful trial must lift the instructed block's lowest point at least 5 cm
 above the tabletop and hold it continuously for 2 s, within 30 s of simulated

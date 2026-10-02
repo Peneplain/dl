@@ -31,7 +31,7 @@ class RGBVideoWriter:
                 [imageio_ffmpeg.get_ffmpeg_exe(), "-n", "-f", "rawvideo",
                  "-pix_fmt", "rgb24", "-s", f"{width}x{height}", "-r", str(fps),
                  "-i", "-", "-an", "-c:v", "libx264", "-preset", "veryfast",
-                 "-crf", "20", "-bf", "0", "-pix_fmt", "yuv420p", str(self.temporary)],
+                 "-crf", "18", "-bf", "0", "-pix_fmt", "yuv420p", str(self.temporary)],
                 stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=self.log)
         except BaseException:
             self.log.close()
@@ -83,7 +83,7 @@ def video_frame_indices(times, fps):
 
 def render_rollout(run, *, out=None, cameras=None, width=640, height=480,
                    lookat=(0, 0, .75), distance=3.0, azimuth=135, elevation=-15,
-                   video=None, video_fps=25):
+                   video=None, video_fps=25, progress=None, rgb_fps=None):
     """Render all saved frames. Default camera is fixed in world coordinates.
 
     Named MJCF cameras are supported, including head/wrist cameras when the
@@ -140,34 +140,53 @@ def render_rollout(run, *, out=None, cameras=None, width=640, height=480,
         saved.model.vis.global_.offwidth = max(width, saved.model.vis.global_.offwidth)
         saved.model.vis.global_.offheight = max(height, saved.model.vis.global_.offheight)
         n = len(saved.sim_time)
+        indices = (np.arange(n) if rgb_fps is None else video_frame_indices(saved.sim_time, rgb_fps))
+        indices = np.unique(indices)
+        times = saved.sim_time[indices]
+        frames = saved.frame_index[indices]
+        n = len(indices)
+        report["rgb_fps"] = rgb_fps
+        report["source_frames"] = len(saved.sim_time)
+        last_progress = time.perf_counter()
+        if progress:
+            progress("render", 0, n)
         # A full 30 s RGB episode can exceed a gigabyte. Stream to disk rather
         # than retaining all rendered images in process memory.
         rgb = np.lib.format.open_memmap(scratch, mode="w+", dtype=np.uint8,
                                        shape=(n, len(cameras), height, width, 3))
         with mujoco.Renderer(saved.model, height=height, width=width) as renderer:
-            for frame in range(n):
-                data = saved.restore(frame)
+            for frame, state_index in enumerate(indices):
+                data = saved.restore(state_index)
                 for slot, camera in enumerate(camera_objects):
                     renderer.update_scene(data, camera=camera)
                     rgb[frame, slot] = renderer.render()
+                if progress and (frame == n - 1 or time.perf_counter() - last_progress >= 5):
+                    progress("render", frame + 1, n)
+                    report.update(rendered_frames=frame + 1, total_frames=n)
+                    write_json(out / "report.json", report)
+                    last_progress = time.perf_counter()
         rgb.flush()
+        if progress:
+            progress("compress RGB", n, n)
         images = out / "images.npz"
         temporary_images = out / ".images.npz.tmp"
         with temporary_images.open("xb") as handle:
             np.savez_compressed(handle, rgb=rgb, camera_names=np.array(cameras),
-                                sim_time=saved.sim_time, frame_index=saved.frame_index,
-                                state_index=np.arange(n),
+                                sim_time=times, frame_index=frames,
+                                state_index=indices,
                                 model_sha256=np.array(saved.metadata["model_sha256"]),
                                 states_sha256=np.array(saved.metadata["states_sha256"]))
         temporary_images.rename(images)
         report.update(images_status="passed", frames=n, images_path=str(images),
                       images_sha256=sha256(images), rgb_shape=list(rgb.shape),
-                      first_sim_time=float(saved.sim_time[0]), last_sim_time=float(saved.sim_time[-1]))
+                      first_sim_time=float(times[0]), last_sim_time=float(times[-1]))
         # Seal RGB first. Encoder failures must not discard successfully rendered images.
         video_indices = np.array([], dtype=np.int64)
         if video is not None:
             report["video_status"] = "encoding"
-            video_indices = video_frame_indices(saved.sim_time, video_fps)
+            video_indices = video_frame_indices(times, video_fps)
+            if progress:
+                progress("encode MP4", 0, len(video_indices))
             writer = RGBVideoWriter(video, width, height, video_fps)
             for index in video_indices:
                 writer.write(rgb[index, 0])
@@ -176,11 +195,12 @@ def render_rollout(run, *, out=None, cameras=None, width=640, height=480,
         report["video"] = ({"path": str(video), "renderer": "mujoco.Renderer",
                             "camera": cameras[0], "fps": video_fps, "frames": writer.frames,
                             "width": width, "height": height, "status": "passed",
+                            "codec": "libx264", "crf": 18, "pixel_format": "yuv420p",
                             "sha256": sha256(video),
-                            "state_index": video_indices.tolist(),
+                            "state_index": indices[video_indices].tolist(),
                             "presentation_time": (np.arange(len(video_indices)) / video_fps).tolist(),
-                            "frame_index": saved.frame_index[video_indices].tolist(),
-                            "source_sim_time": saved.sim_time[video_indices].tolist()}
+                            "frame_index": frames[video_indices].tolist(),
+                            "source_sim_time": times[video_indices].tolist()}
                            if writer is not None else None)
         report["status"] = "passed"
     except BaseException as error:

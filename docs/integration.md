@@ -1,13 +1,15 @@
 # ARDY, SONIC and MuJoCo integration
 
 The `baseline/` package contains model-independent reference, provenance and
-frozen SONIC execution utilities. `scripts/run_live.py` connects text input,
+frozen SONIC execution utilities. `scripts/run.py` connects text input,
 ARDY reference generation, the timestamped reference buffer and a free-base
-MuJoCo G1 loop. It is a standing/arm-motion bring-up, not a grasp demo.
+MuJoCo G1 loop. Batch and manual modes share `baseline/execution.py`; an
+explicit `--grasp` enables the pilot tabletop task.
 The [B0 bring-up guide](baseline.md) now supplies pinned downloads, an explicit
 MUSA/CPU ARDY generation entry and a CPU SONIC ONNX graph check. These are
-separate acceptance gates; tabletop task sequencing and grasp execution remain
-outside the current bring-up executor.
+separate acceptance gates. The [pilot grasp collector](grasp.md) reuses this
+executor with a dynamic table/block scene, fixed phases and ARDY spatial
+constraints; physical grasp/lift acceptance remains incomplete.
 
 ## Upstream interfaces checked
 
@@ -30,7 +32,7 @@ physical behavior still needs validation. Store asset hashes in run manifests.
 Use the official environment instructions for each upstream project only when
 you need an upstream diagnostic. The repository's supported B0 path puts ARDY,
 SONIC simulation dependencies and MuJoCo in the single `.venv-baseline-musa`;
-you do not need to create the upstream `.venv_sim` for `scripts/run_live.py`.
+you do not need to create the upstream `.venv_sim` for `scripts/run.py`.
 Confirm the available inference host supports the actual SONIC backend; an S4000
 training allocation does not imply TensorRT compatibility.
 
@@ -66,7 +68,7 @@ of those 29 names is required; never relabel columns based on an assumed index.
 python scripts/prepare_reference.py \
   --qpos-csv /path/to/ardy-output.csv \
   --joint-names /path/to/source-joint-names.json \
-  --source-fps 25 --out artifacts/ardy-reference.npz --packet
+  --source-fps 25 --out output/ardy-reference.npz --packet
 ```
 
 This converter explicitly expects 36 columns: root xyz, root quaternion **wxyz**,
@@ -93,11 +95,11 @@ that scheduling/transport integration against the pinned receiver before live us
 
 ## 3. Run the B0 control loop
 
-The current standing/arm-motion executor is `scripts/run_live.py`. It:
+The shared executor is `baseline/execution.py`, invoked by `scripts/run.py`. It:
 
 1. Timestamps measured poses and ARDY requests.
-2. Converts ARDY output to the canonical reference and accepts further text
-   requests while the simulation runs.
+2. Converts ARDY output to the canonical reference. Manual mode disables and
+   discards new input during generation/execution, then waits for the next JSON.
 3. Buffers the lookahead required by the selected SONIC observation configuration.
 4. At each 50 Hz reference tick, checks limits from the active G1 asset using
    elapsed simulation time, then recomputes velocity and dependent kinematics.
@@ -107,13 +109,17 @@ The current standing/arm-motion executor is `scripts/run_live.py`. It:
    clocks and frame indices, and resets controller and buffer state per episode.
 
 `ReferenceBuffer`, the ONNX observation adapter, MuJoCo executor and rollout
-logger are available in `baseline/`. The tabletop scene, task sequencer,
-clearance/collision policy and contact hand state machine are still pending.
+logger are available in `baseline/`. `baseline/grasp.py` now supplies a pilot
+table/block scene, simulator-state root approach goals and arrival checks, a
+right-hand sequencer, finger targets and physical contact assessment. The pinned
+SONIC G1 mode does not consume world root XY; root paths condition ARDY gait,
+and actual position is assessed separately before reaching. General instruction parsing, pre-execution clearance
+checks and verified grasp/lift still need work.
 The logger saves full MuJoCo state at 50 Hz plus a compiled scene under
-`rollout/`. The separate `scripts/render_expert_rollout.py` restores frames
+`rollout/`. The separate `scripts/render.py` restores frames
 without advancing physics, producing camera RGB in `vision/images.npz` and
 optional MP4. The default camera is fixed third-person; named cameras from the
-recorded scene can provide future head/wrist views. These images are recording
+recorded scene provide head/wrist views in the tabletop collector. These images are recording
 outputs and do not change the privileged-state inference interfaces.
 Additional body orientations or positions, if supplied, must be consistent with
 joint references.

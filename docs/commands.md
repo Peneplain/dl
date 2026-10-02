@@ -1,345 +1,260 @@
 # Running the project
 
-All commands below use the same entry point: **run `./run.sh` from `~/dl` on
-the S4000 server host**. The launcher selects the container and existing Python
-environment automatically. Do not run this wrapper inside a container.
+Run `./run.sh` from `~/dl` on the S4000 **host**. The launcher uses the existing
+container and `.venv-baseline-musa`; do not invoke it from inside a container.
+Execution has two modes, `batch` and `manual`. Export videos separately with
+`render`.
 
-The currently supported pipeline is frozen ARDY -> frozen SONIC -> free-base
-MuJoCo execution -> saved states -> offline camera RGB/video. Tabletop grasping
-and trained Risk/Residual controllers remain under development.
-
-## Quick start
+## 1. Batch generation and video selection
 
 ```bash
 cd ~/dl
-./run.sh check
-./run.sh live --prompt "Raise both arms slowly, then lower them." \
-  --duration 2 --sim-seconds 5 --fast \
-  --out artifacts/demo-01 --video artifacts/demo-01/baseline.mp4
+# Default: one standing recording, no task, text, table/block, or GUI
+./run.sh batch
+
+# Enable the right-hand tabletop block lift task; default batch size is one
+./run.sh batch --grasp
+./run.sh batch --grasp --batch 20 --seed 42
+
+# Start farther back, then walk to a grounded position before reaching
+./run.sh batch --grasp --seed 42 --start-back .45 --table-standoff .22
+
+# Fixed position for paired prompt comparisons
+./run.sh batch --grasp --batch 2 --seed 42 --cube-xy .40 -.22
+
+# General text-driven motion without a grasp task
+./run.sh batch --prompt 'A person stands upright and slowly raises the right hand.'
 ```
 
-The run records full states during execution, then renders `vision/images.npz`
-and `baseline.mp4`. The first text request loads ARDY and its text encoder.
-Rendering is offline and may take longer than the simulated motion.
+Results are saved automatically to `output/batch-YYMMDD-HHMMSS/`, using
+Asia/Shanghai time, for example `batch-261003-031351`. If another launch has
+already reserved the same second, allocation waits for the next available second.
+Existing sessions are never overwritten. Attempts start at `attempt-00001` and reset independently.
+`--seed 42 --batch 20` uses seeds 42 through 61. Each attempt samples block XY
+with its own seed; ARDY phase seeds add the phase index to that seed.
+Repeating the same arguments reproduces the sampling plan; folder timestamps
+do not change seeds. Default XY bounds are X=[.36,.46], Y=[-.30,-.16] metres.
+Use `--cube-xy X Y` for a fixed position or
+`--xy-range XMIN XMAX YMIN YMAX` to change the range. See [task details](grasp.md)
+for supported bounds. The grasp scene starts the robot an additional 0.45 m
+behind a target 0.22 m from the front table edge. `--start-back` (.05-.6 m) and
+`--table-standoff` (.20-.55 m) configure these distances. They measure root
+position, not fingertip clearance. The default root starts at X=-.36 m and
+approaches X=-.11 m for the current table. These are pilot settings.
 
-Use a **new run name** each time (`demo-02`, `demo-03`, ...). Existing run,
-render and video outputs are never reused. Default devices are MUSA for ARDY
-and text encoding (bfloat16 text weights), CPU ONNX Runtime for SONIC, and
-OSMesa software rendering for RGB. The default image is `dl-musa-render:latest`.
+The task now runs approach, settle, prepare, reach, lower, close, lift, and hold. MuJoCo
+state provides table/block locations and the root target; images are not model
+inputs. An attempt must reach the target and settle on both feet before preparation,
+then pass the same continuous stability check before reaching. The G1 head is
+rigid; `prepare` requests a gentle 8-degree waist inclination through ARDY.
+`prepare_not_settled` identifies an unstable preparation; `prepare_target_drift`
+identifies excessive position drift during preparation. Failure
+reasons `approach_target_missed`, `approach_not_settled`, and `approach_too_close`
+identify approach failures; they count as failed trials. The full approach and
+grasp must still finish within the same 30-second simulation budget.
 
-## Record first, render later
+The terminal prints `[SUCCESS]`, `[FAILED]`, or `[COMPLETED]` for each attempt
+and lists all results at the end. Open **`summary.txt` or `summary.md`** in the
+output directory for counts, success rate, individual outcomes, seeds, phases,
+simulation times, and reasons. `results.csv` is suitable for spreadsheets;
+`successes.txt` and `failures.txt` list matching attempt directories. Execution
+without a task is `COMPLETED` and does not count as grasp success. A failed grasp
+does not prevent the next attempt; the overall command returns a nonzero exit
+code if any attempt fails.
 
-Save states without starting a renderer:
+Both batch and manual sessions load SONIC, ARDY, and the 8B text model before
+accepting or executing prompts, including sessions without a default task or
+prompt. A prominent `ALL MODELS LOADED: ARDY + text encoder + SONIC` banner
+confirms completion. Batch execution then starts its planned attempts. The
+terminal prints a loading/generation heartbeat every 15 seconds. Startup status
+and loading wall time are saved separately in `startup.json`. Simulation time pauses during
+loading and generation. Batch collection **does not render automatically**;
+inspect the summary first, then select videos:
 
 ```bash
-./run.sh live --prompt "Raise both arms slowly, then lower them." \
-  --duration 2 --sim-seconds 5 --fast --out artifacts/record-01
+# Replace the timestamp below with the actual output directory name
+./run.sh render --run output/batch-YYMMDD-HHMMSS --attempts 1 3 5
+./run.sh render --run output/batch-YYMMDD-HHMMSS --all
+./run.sh render --run output/batch-YYMMDD-HHMMSS --successes
+
+# A single attempt path also works
+./run.sh render --run output/batch-YYMMDD-HHMMSS/attempt-00001
 ```
 
-Render those states once, using the default fixed third-person camera:
+Each selected attempt produces `vision/video.mp4` and `vision/images.npz`.
+Repeated rendering uses a fresh `vision-TIME/` directory without overwriting
+videos or rerunning physics. Failed attempts can be rendered if their rollout
+states were saved. `--all` includes failed and interrupted directories; missing
+or incomplete states produce an individual error while other attempts continue.
+`render-TIME.json` records every result from that rendering command.
+
+Defaults are third-person, 640x480, 25 FPS, with H.264 CRF 18 encoding.
+This is twice the previous width and height; additional pixels increase rendering
+cost and RGB storage, not video duration. For 720p, use `--width 1280 --height 720`. Rendering displays progress and
+estimated remaining time; software rendering can be much slower than simulation.
+Use `--fps 50` to render every 50 Hz control frame, or `--no-video` for RGB only.
+The grasp scene supports multiple cameras; the first camera supplies the video:
 
 ```bash
-./run.sh render --run artifacts/record-01 \
-  --video artifacts/record-01/baseline.mp4
+./run.sh render --run output/batch-YYMMDD-HHMMSS --attempts 1 \
+  --camera third_person --camera head_camera --camera wrist_camera \
+  --width 640 --height 480 --fps 25
 ```
 
-For RGB only, omit `--video` from the rendering command. Choose either command
-for the first render; both default to the same fresh `vision/` directory.
+Adjust the view with `--azimuth 90 --elevation -10 --distance 2.5`.
+A 30-second, 640x480, 25 FPS raw RGB stream requires about 0.69 GB per camera.
+RGB is saved before MP4 encoding; encoder failures preserve completed RGB and
+write an error in the rendering report.
 
-Change the view without rerunning the robot:
+## 2. Manual execution: one JSON request at a time
 
 ```bash
-./run.sh render --run artifacts/record-01 \
-  --out artifacts/record-01/vision-side \
-  --azimuth 90 --elevation -10 --distance 2.5 \
-  --video artifacts/record-01/side.mp4
+./run.sh manual
+./run.sh manual --gui
+./run.sh manual --grasp --gui
 ```
 
-| Option | Meaning | Default |
-| --- | --- | --- |
-| `--camera` | `third_person` or a camera defined in the recorded MJCF | `third_person` |
-| `--lookat X Y Z` | Fixed world-space camera target, metres | `0 0 0.75` |
-| `--distance` | Distance from camera to target, metres | `3` |
-| `--azimuth` | Horizontal camera angle, degrees | `135` |
-| `--elevation` | Vertical camera angle, degrees | `-15` |
-| `--width`, `--height` | RGB resolution; MP4 requires even dimensions | `640`, `480` |
-| `--video-fps` | MP4 simulation-time sampling rate | `25` |
-| `--out` | Fresh rendering output directory | `RUN/vision` |
+Results are saved to `output/manual-YYMMDD-HHMMSS/attempt-00001/` and
+subsequent attempt directories. Startup loads all models before showing
+`READY >`, without generating motion or advancing physics. Input entered during
+loading is discarded. If loading fails, the session exits without accepting a
+prompt; details are recorded in `startup.json`. Each JSON request is a **new independent attempt**: the scene resets,
+while models and the GUI window stay loaded. Requests do not append commands
+to the previous trajectory. There is no default task or prompt. Without a task,
+enter a motion request such as:
 
-Multiple `--camera` options produce synchronized RGB views; the MP4 uses the
-first camera. Head/wrist camera names work only after those cameras are added
-to the scene **before recording**. They are not currently defined in the G1
-bring-up scene. Old CSV-only runs lack the complete state needed for this replay.
-
-## Interactive prompts
-
-Keep ARDY and SONIC loaded and record a separate episode for each prompt:
-
-```bash
-./run.sh live --keep-alive --fast --sim-seconds 5 \
-  --out artifacts/session-01 --video artifacts/session-01/baseline.mp4
+```json
+{"prompt":"A person stands upright and slowly raises the right hand.","duration":2,"seed":42}
 ```
 
-After loading finishes, type one request per line:
+With `--grasp`, `{}` uses the default eight-phase prompts. Positions and individual
+phase prompts can also be specified:
 
-```text
-{"prompt":"A person stands still.","duration":2,"seed":0}
-{"prompt":"Raise both arms slowly, then lower them.","duration":3,"seed":1}
-quit
+```json
+{"seed":42,"cube_xy":[0.40,-0.22],"phase_prompts":{"reach":"A person stands upright, bends the right elbow and raises the open right hand above the table."}}
 ```
 
-Plain text also works, using duration 2 s and seed 0. The robot resets between
-episodes. Outputs go to `session-01/run-0001/`, `run-0002/`, ...; rendering
-finishes before the next prompt is executed. `session.json` records each run's
-status. A failed/stopped episode makes the completed session exit nonzero.
-These are bring-up interactions, not the proposal's evaluated correction subset.
+Supported keys: `prompt`, `duration`, `seed`, `cube_xy`, `phase_prompts`, and
+`reference`. `duration` controls general motion length (.08-25 seconds); grasp
+phase durations are fixed. `reference` accepts a saved reference.npz for tracking
+diagnostics without a task or prompt. An omitted seed increases with the attempt
+index; an explicitly supplied seed overrides only that request.
 
-| Execution option | Behavior |
-| --- | --- |
-| `--fast` | Pause simulation during ARDY generation; remove wall-clock pacing |
-| No `--fast` | Pace physics at 50 Hz; a single-run request generates while SONIC holds |
-| `--keep-alive` | Independent prompt episodes; pause simulation during generation/waiting |
-| `--duration` | Requested ARDY motion duration, seconds |
-| `--sim-seconds` | Minimum episode duration; successful references also get transition + 2 s hold |
-| `--seed` | ARDY generation seed |
-| `--video PATH.mp4` | Render saved states to RGB and MP4 after execution |
+While `BUSY`, the terminal disables echo and **discards** additional input.
+Commands are not queued for the next attempt. During generation, the GUI holds
+the current pose; during execution, physics is paced to simulation time.
+Submit another request only after `READY >` returns. Waiting for input does not
+advance physics. Enter `quit` or `exit` at READY to exit, or use Ctrl-C to
+interrupt; an in-flight model computation must finish before shutdown.
+Do not paste multiple JSON lines at once. Use batch mode for batch execution.
 
-`--fast` does not establish real-time performance. Safety stops can end an
-episode early. A standing/arm-motion run reporting `passed` is not grasp success.
-
-## Live GUI from a Mac
-
-Run this in the **Mac terminal**, not inside Docker:
+The GUI is displayed through the server's VNC service. From a Mac terminal:
 
 ```bash
 ssh -tt -o ExitOnForwardFailure=yes \
   -L 5901:127.0.0.1:5900 group3@10.123.0.39 \
-  'cd ~/dl && ./run.sh gui'
-```
-
-After the models load and the viewer is ready, run this in another Mac terminal:
-
-```bash
+  'cd ~/dl && ./run.sh manual --grasp --gui'
+# In another Mac terminal
 open vnc://localhost:5901
 ```
 
-Leave the VNC username blank; the current password is `group3`. Enter the same
-JSONL prompts in the first terminal. `quit` closes the session. Each episode's
-states, RGB and MP4 are saved under `artifacts/interactive-gui-*/run-NNNN/`.
-The GUI uses `dl-musa-gui:latest` and its virtual GLX display. Omit `--fast` when
-watching motion. Offline rendering between prompts can temporarily leave the
-viewer at the final pose.
+Leave the VNC username blank; the current password is `group3`. Enter JSON in
+the first terminal and watch motion in VNC. Manual sessions do not render
+videos automatically. Afterward, pass the manual directory to the same `render`
+command used for batches.
 
-To start the same GUI on the server host:
+## Resume and prompt configuration
 
 ```bash
-./run.sh gui
+./run.sh batch --grasp --batch 20 --seed 42 --plan-only
+./run.sh batch --resume output/batch-YYMMDD-HHMMSS
+./run.sh batch --grasp --phase-prompts configs/grasp-prompts.json
 ```
 
-## Separate model checks and execution
+`--plan-only` writes a plan without loading models. `--resume` is batch-only:
+**supply no other options**, because all settings come from `plan.json`.
+Completed successes, failures, and timeouts are skipped. Interrupted attempts
+reuse the original seed and write to a sibling such as
+`attempt-00001-retry-02`; use that full name when selecting it for rendering.
+Changes to code, configuration, model locks, or saved evidence hashes prevent
+resume and require a fresh batch. Completed failures are never retried until
+success; failures remain in the success-rate denominator.
 
-Check standing without loading ARDY:
+The default `focused` profile describes only the current phase. `--prompt`
+adds a shared prefix to every phase. `--phase-prompts` accepts keys
+approach/settle/prepare/reach/lower/close/lift/hold and replaces the entire text for each specified phase.
+`--prompt-profile legacy` retains the previous wording for comparisons with
+matched seeds and positions. See [prompt guidance](prompts.md) for rationale
+and evidence.
 
-```bash
-./run.sh live --sim-seconds 5 --fast --out artifacts/standing-01 \
-  --video artifacts/standing-01/baseline.mp4 < /dev/null
-```
-
-Generate an ARDY reference without robot execution:
-
-```bash
-./run.sh ardy --prompt "A person stands still." --duration 2 --seed 0 \
-  --out artifacts/ardy-01
-```
-
-Execute the generated reference through SONIC:
-
-```bash
-./run.sh live --reference artifacts/ardy-01/reference.npz \
-  --sim-seconds 5 --fast --out artifacts/reference-01 \
-  --video artifacts/reference-01/baseline.mp4 < /dev/null
-```
-
-Probe the two frozen SONIC ONNX graphs:
-
-```bash
-./run.sh sonic --out artifacts/sonic-check-01
-```
-
-This is a graph/operator check with synthetic inputs, not robot control.
-
-Keep ARDY loaded for repeated reference generation only:
-
-```bash
-./run.sh service --out-root artifacts/ardy-service-01
-```
-
-Then enter:
+## Output structure
 
 ```text
-{"name":"stand","prompt":"A person stands still.","duration":2,"seed":0}
-{"name":"arms","prompt":"Raise both arms slowly.","duration":2,"seed":1}
-quit
+output/batch-TIME/                 # Or manual-TIME
+  plan.json                       # Source, configuration, seeds, and position plan
+  startup.json                    # Model loading status, wall time, and errors
+  requests.json                   # Accepted manual requests
+  summary.txt / summary.md         # Readable overview
+  summary.json / results.csv       # Structured results and spreadsheet
+  successes.txt / failures.txt     # Matching attempt names
+  attempt-00001/
+    request.json / report.json     # Request, outcome, clocks, hashes, and errors
+    scene.xml / settings.json      # Grasp scene and task parameters
+    events.jsonl / trajectory.csv  # Events, states, references, and torques
+    task.csv                      # 200 Hz grasp contact, height, and wrist log
+    ardy/PHASE/                   # Text, measured history, constraints, references
+    grounding/PHASE.json           # Current table, block, root, and approach target
+    rollout/                      # Compiled scene and initial + full 50 Hz states
+    vision/                       # Created only by a later render command
+      images.npz / video.mp4 / report.json
 ```
 
-Convert a motion CSV into a named 50 Hz reference and offline packet:
+State frame -1 is the initial state; subsequent frame_index values match
+trajectory.csv. RGB preserves original state_index/frame_index/sim_time and
+synchronizes multiple cameras. Visual replay does not rerun SONIC or establish
+independent physical acceptance. Task success, rendering success, and training
+eligibility are separate fields. Currently `expert_valid=false`; the full
+learning-data pipeline remains planned.
+
+## Installation and diagnostics
+
+Reuse an existing environment. For initial setup:
 
 ```bash
-./run.sh convert --qpos-csv artifacts/ardy-01/motion.csv \
-  --joint-names artifacts/ardy-01/joint_names.json --source-fps 25 \
-  --out artifacts/converted-01.npz --packet
-```
-
-Export the reference as upstream SONIC deploy CSVs:
-
-```bash
-./run.sh deploy --reference artifacts/ardy-01/reference.npz \
-  --motion-csv artifacts/ardy-01/motion.csv \
-  --out-dir artifacts/deploy-01 --name stand
-```
-
-Neither converter starts a simulator, network publisher or C++ deploy process.
-
-## Validation and packaging
-
-```bash
-./run.sh check
-./run.sh tests
-./run.sh smoke --out artifacts/smoke-01
-./run.sh package --out artifacts/b0-source-01.tar.gz
-```
-
-`check` verifies dependencies, pinned sources/assets and MUSA primitives.
-`tests` includes actual RGB/MP4 replay fixtures. `smoke` checks synthetic
-reference conversion and packet fields. These do not prove physical grasp
-success. `package` includes only declared baseline source files, including
-this guide and launcher; model weights and run outputs stay excluded.
-
-## First setup or image rebuild
-
-The current server already has the environment, weights and images. Use these
-commands only when setting up another machine or rebuilding an image:
-
-```bash
-cd ~/dl
 ./run.sh build
 ./run.sh build-gui
-./run.sh build-base
-```
-
-The host needs the MUSA Docker runtime registered. On a new host with the
-toolkit already installed, an administrator can run:
-
-```bash
-sudo /usr/bin/musa/docker setup /usr/bin/musa
-sudo systemctl restart docker
-```
-
-Only the first image is needed for ordinary headless execution and RGB/video.
-`build-gui` adds the viewer/VNC environment. `build-base` is control-only and
-does not include a graphics backend.
-
-On first setup, enter the image and create the environment **inside Docker**:
-
-```bash
 ./run.sh shell
-```
-
-Then, in that container shell:
-
-```bash
+# Inside the container; create the environment only if it does not exist
 python -m virtualenv --system-site-packages .venv-baseline-musa
 source .venv-baseline-musa/bin/activate
 bash scripts/install_baseline.sh
 exit
-```
-
-Reuse an existing environment; do not recreate it. If the vendor image lacks
-`virtualenv`, install that tool with `python -m pip install virtualenv` first.
-The installer preserves the matched vendor `torch`/`torch_musa` packages.
-
-Back on the host, download pinned sources and weights:
-
-```bash
+# Back on the host
 ./run.sh fetch --only all
 ./run.sh check
 ```
 
-`--only sources`, `sonic`, `ardy`, `text`, or `llama` selects a subset. Llama
-access requires the approved Hugging Face account. To log in using the project's
-installed HF client, use `./run.sh shell`, then `hf auth login`; keep credentials
-outside Git. Offline registration is `./run.sh fetch --only all --offline` and
-requires complete source checkouts plus original download provenance.
-
-For custom Python work, `./run.sh shell` opens the configured environment.
-If its shell resets PATH, use `source .venv-baseline-musa/bin/activate` there.
-
-## Outputs and failure handling
-
-```text
-artifacts/<run>/
-  report.json             Execution status, failures, model hashes and timings
-  events.jsonl            Reference, hold and stop events
-  trajectory.csv          Control-frame robot state/reference/torque log
-  ardy/                   Generated motion and references, when requested
-  rollout/
-    scene.mjb             Compiled scene with assets and physics settings
-    metadata.json         Version, state schema, joint addresses and hashes
-    states.npz            Initial state and every completed control-frame state
-  vision/
-    images.npz            RGB [N,C,H,W,3] uint8 and source frame/time mappings
-    report.json           Camera settings, hashes, rendering/encoding status
-  baseline.mp4            Optional first-camera H.264 video
-  baseline.mp4.ffmpeg.log  Encoder diagnostics
-```
-
-State/RGB frame `-1` is the initial state; frames `0..` match `trajectory.csv`.
-Recording and RGB use 50 Hz control frames, not the 200 Hz physics substeps.
-Full state includes free root, articulated fingers and any dynamic objects
-present in the scene. Replay restores each saved state and calls `mj_forward`
-to refresh geometry; it never steps physics or runs a teacher/policy.
-
-RGB is saved before MP4 encoding. If encoding fails, inspect `video_status`
-and the ffmpeg log; successfully saved RGB and rollout states remain available.
-Partial MP4s are not published. MP4 frames use a uniform simulation-time grid,
-mapped to the nearest saved states. Video metadata includes source state indices,
-frame indices, simulation times and presentation times. The initial/final samples
-can make encoded duration differ from the recorded time span by at most one
-video-frame interval. RGB always includes every saved state, irrespective of FPS.
-
-If rendering fails, retry from the saved rollout with a new `--out` and video
-path. `execution_status` distinguishes execution from automatic rendering failure.
-Automatic single runs and completed interactive sessions return nonzero on
-failure or safety stop. Read the reports even when a video was produced.
-
-Keep enough disk space for the temporary RGB array: 30 s at 50 Hz, 640x480,
-one camera needs about 1.38 GB before compression; each additional camera adds
-the same amount. OSMesa rendering is offline software work, not MUSA inference.
-Keep simulation time, model latency and rendering wall time separate.
-
-The current real G1 scene has no tabletop grasp task. Saved state is sufficient
-for visual replay but not counterfactual learning branches: controller history,
-reference buffers and disturbance RNG need separate restoration. See
-[verification.md](verification.md) for actual evidence and remaining gaps.
-
-## Help
+Install virtualenv first if it is missing. Preserve the matched vendor
+torch/torch_musa stack; do not replace it with CUDA builds. Llama downloads
+require an approved Hugging Face account; run `hf auth login` inside the
+container and keep credentials outside Git. Select components with
+`fetch --only sources|sonic|ardy|text|llama`. Offline registration uses
+`--offline` and requires complete original download metadata.
 
 ```bash
-./run.sh help
-./run.sh live --help
+./run.sh tests
+./run.sh smoke --out output/smoke-NEW-NAME
+./run.sh sonic --out output/sonic-NEW-NAME
+./run.sh ardy --prompt 'A person stands still.' --duration 2 --seed 42 --out output/ardy-NEW-NAME
+./run.sh package --out output/b0-source-NEW-NAME.tar.gz
+./run.sh batch --help
+./run.sh manual --help
 ./run.sh render --help
-./run.sh ardy --help
 ```
 
-Advanced overrides on the host:
-
-```bash
-MTHREADS_VISIBLE_DEVICES=0 ./run.sh live --sim-seconds 2 --fast \
-  --out artifacts/device-01 < /dev/null
-MUSA_IMAGE=dl-musa:latest ./run.sh live --sim-seconds 2 --fast \
-  --out artifacts/control-only-01 < /dev/null
-```
-
-The control-only image can save states; run `./run.sh render` afterward in the
-default rendering image. The launcher uses private IPC with 16 GiB shared-memory
-capacity. Prefer this default when running multiple containers.
+`check` verifies complete assets and MUSA primitives. Smoke uses synthetic
+references and establishes neither model compatibility nor grasp success.
+`ardy`, `sonic`, `convert`, `deploy`, and `service` are module diagnostics or
+conversion utilities. `MUSA_IMAGE` overrides the container image;
+`MTHREADS_VISIBLE_DEVICES` selects devices. See [baseline](baseline.md) and
+[integration](integration.md) for interface details.

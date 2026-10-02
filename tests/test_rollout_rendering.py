@@ -135,6 +135,26 @@ class RolloutTests(unittest.TestCase):
 @unittest.skipUnless(os.environ.get("RUN_MUJOCO_RENDER_TESTS") == "1",
                      "Set RUN_MUJOCO_RENDER_TESTS=1 with a working MuJoCo GL backend")
 class RGBRenderingTests(unittest.TestCase):
+    def test_rgb_sampling_keeps_original_state_and_video_mapping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            record_fixture(run)
+            calls = []
+            with patch("mujoco.mj_step", side_effect=AssertionError("No physics in renderer")):
+                report = render_rollout(run, width=64, height=48, rgb_fps=10,
+                                        video=run / "sampled.mp4", video_fps=10,
+                                        progress=lambda *values: calls.append(values))
+            saved = SavedRollout(run)
+            with np.load(run / "vision/images.npz") as images:
+                indices = images["state_index"]
+                self.assertLess(len(indices), len(saved.sim_time))
+                np.testing.assert_array_equal(images["sim_time"], saved.sim_time[indices])
+                np.testing.assert_array_equal(images["frame_index"], saved.frame_index[indices])
+                self.assertEqual(report["video"]["state_index"], indices.tolist())
+                self.assertEqual(images["rgb"].shape[0], len(indices))
+            self.assertEqual(calls[0], ("render", 0, len(indices)))
+            self.assertIn(("render", len(indices), len(indices)), calls)
+
     def test_actual_rgb_multicamera_and_mp4_replay(self):
         with tempfile.TemporaryDirectory() as directory:
             run = Path(directory)

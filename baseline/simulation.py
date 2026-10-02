@@ -20,10 +20,10 @@ class SimulationStop(RuntimeError):
 
 
 class SonicSimulation:
-    def __init__(self, assets, repo, output, threads=2, video_path=None, policy=None,
-                 gui=False):
+    def __init__(self, assets, repo, output, threads=2, policy=None,
+                 gui=False, scene=None, initial_body_reference=None):
         self.policy = policy if policy is not None else SonicPolicy(assets, repo, threads)
-        self.scene = repo / "gear_sonic/data/robot_model/model_data/g1/scene_43dof.xml"
+        self.scene = Path(scene) if scene is not None else repo / "gear_sonic/data/robot_model/model_data/g1/scene_43dof.xml"
         self.model = mujoco.MjModel.from_xml_path(str(self.scene))
         self.model.opt.timestep = .005
         self.data = mujoco.MjData(self.model)
@@ -32,7 +32,6 @@ class SonicSimulation:
         self.trajectory_file = None
         self.trajectory = None
         self.recording = None
-        self.video_path = None
         self.viewer = None
         root = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "floating_base_joint")
         if root < 0 or self.model.jnt_type[root] != mujoco.mjtJoint.mjJNT_FREE:
@@ -43,6 +42,14 @@ class SonicSimulation:
         self.q_indices = self.model.jnt_qposadr[joints]
         self.v_indices = self.model.jnt_dofadr[joints]
         self.ranges = self.model.jnt_range[joints].copy()
+        self.initial_body_reference = np.array(
+            self.policy.parameters.default if initial_body_reference is None else initial_body_reference,
+            dtype=float, copy=True)
+        if (self.initial_body_reference.shape != (29,)
+                or not np.isfinite(self.initial_body_reference).all()
+                or (self.initial_body_reference < self.ranges[:, 0]).any()
+                or (self.initial_body_reference > self.ranges[:, 1]).any()):
+            raise ValueError("Initial body reference must contain 29 finite, bounded joint angles")
         by_joint = {int(self.model.actuator_trnid[i, 0]): i for i in range(self.model.nu)}
         self.actuators = np.array([by_joint[j] for j in joints])
         if not np.allclose(self.model.actuator_gear[self.actuators, 0], 1):
@@ -52,11 +59,14 @@ class SonicSimulation:
                    if "_hand_" in (self.model.joint(j).name or "") and j in by_joint]
         self.finger_q = self.model.jnt_qposadr[fingers]
         self.finger_v = self.model.jnt_dofadr[fingers]
+        self.finger_names = tuple(self.model.joint(j).name for j in fingers)
+        self.finger_ranges = self.model.jnt_range[fingers].copy()
         self.finger_actuators = np.array([by_joint[j] for j in fingers])
         if len(fingers) != 14 or len(body_joints) != 29:
             raise ValueError("Expected 29 body joints and 14 articulated finger joints")
-        self.finger_target = np.clip(np.zeros(14), self.model.jnt_range[fingers, 0],
-                                     self.model.jnt_range[fingers, 1])
+        self.finger_open = np.clip(np.zeros(14), self.finger_ranges[:, 0],
+                                   self.finger_ranges[:, 1])
+        self.finger_target = self.finger_open.copy()
         self.started = time.perf_counter()
         self.latencies = []
         self.tracking_errors = []
@@ -68,7 +78,7 @@ class SonicSimulation:
             self.started = time.perf_counter()
             self.reset()
         else:
-            self.start_run(output, video_path)
+            self.start_run(output)
         if gui:
             try:
                 from mujoco import viewer
@@ -89,7 +99,7 @@ class SonicSimulation:
                                      "wall_time": time.perf_counter() - self.started,
                                      **fields}, allow_nan=False) + "\n")
 
-    def start_run(self, output, video_path=None):
+    def start_run(self, output):
         if self.output is not None:
             raise RuntimeError("A simulation output run is already active")
         self.output = Path(output)
@@ -103,7 +113,6 @@ class SonicSimulation:
                                  [f"q:{n}" for n in ISAACLAB_JOINT_NAMES] +
                                  [f"ref:{n}" for n in ISAACLAB_JOINT_NAMES] +
                                  [f"torque:{n}" for n in ISAACLAB_JOINT_NAMES])
-        self.video_path = Path(video_path) if video_path else None
         self.started = time.perf_counter()
         self.latencies = []
         self.tracking_errors = []
@@ -119,7 +128,6 @@ class SonicSimulation:
         if self.recording is not None:
             self.recording.close()
             self.recording = None
-        self.video_path = None
         if self.events is not None:
             self.events.close()
             self.events = None
@@ -140,7 +148,8 @@ class SonicSimulation:
         if self.recording is not None:
             raise RuntimeError("End the recorded episode before resetting simulation time")
         mujoco.mj_resetData(self.model, self.data)
-        self.data.qpos[self.q_indices] = self.policy.parameters.default
+        self.finger_target = self.finger_open.copy()
+        self.data.qpos[self.q_indices] = self.initial_body_reference
         self.data.qpos[self.finger_q] = self.finger_target
         mujoco.mj_forward(self.model, self.data)
         # Set initial ground clearance once, never constrain or teleport the base during execution.
@@ -154,7 +163,7 @@ class SonicSimulation:
         mujoco.mj_forward(self.model, self.data)
         self.policy.reset()
         self.buffer = ReferenceBuffer(max_gap=.021)
-        self.current_ref = self.policy.parameters.default.copy()
+        self.current_ref = self.initial_body_reference.copy()
         self.current_quat = self.data.qpos[self.root_q + 3:self.root_q + 7].copy()
         self.end_time = 0.0
         self.holding = True
@@ -167,7 +176,7 @@ class SonicSimulation:
         return np.concatenate([self.data.qpos[self.root_q:self.root_q + 7],
                                self.data.qpos[self.q_indices]])
 
-    def history(self, count=16):
+    def history_qpos(self, count=16):
         """Return recent executed qpos at 25 Hz in ISAACLAB joint order."""
         if count < 4 or count % 4:
             raise ValueError("ARDY history count must be a multiple of four and at least four")
@@ -185,10 +194,6 @@ class SonicSimulation:
         unique, inverse = np.unique(times, return_inverse=True)
         if len(unique) > 1: q[:, 3:7] = ref.sample(unique).body_quat[inverse]
         return q
-
-    def history_qpos(self, count=16):
-        """Explicit alias used by the live ARDY request path."""
-        return self.history(count)
 
     @staticmethod
     def load_reference(path):
@@ -237,6 +242,18 @@ class SonicSimulation:
         self.event("reference_installed", frames=len(sequence.times), end_time=self.end_time,
                    transition_seconds=n * .02)
 
+    def hold_measured_pose(self, reason):
+        """End a task segment with a checked pose hold through frozen SONIC.
+
+        Only the reference buffer changes. Physics, free joints, and policy
+        history continue; no executed pose or object state is overwritten.
+        """
+        pose = self.body_pose()
+        reference = ReferenceSequence([0., .02], np.repeat(pose[None, 7:], 2, axis=0),
+                                      np.repeat(pose[None, 3:7], 2, axis=0))
+        self.install(reference, transition=.1)
+        self.event("measured_pose_hold", reason=reason, body_qpos=pose.tolist())
+
     def lookahead(self):
         count = self.policy.future_count
         times = self.data.time + np.arange(count) * self.policy.future_step * .02
@@ -265,7 +282,20 @@ class SonicSimulation:
         self.current_ref, self.current_quat = p[0].copy(), q[0].copy()
         return p, v, q
 
-    def tick(self):
+    def command_fingers(self, targets, max_rate=2.5):
+        """Named hand commands under a shared radians/second rate limit."""
+        if not np.isfinite(max_rate) or max_rate <= 0:
+            raise ValueError("Finger rate must be positive and finite")
+        requested = self.finger_target.copy()
+        for name, value in targets.items():
+            index = self.finger_names.index(name)
+            if not np.isfinite(value) or not self.finger_ranges[index, 0] <= value <= self.finger_ranges[index, 1]:
+                raise ValueError(f"Invalid finger target for {name}: {value}")
+            requested[index] = value
+        self.finger_target += np.clip(requested - self.finger_target, -max_rate * .02,
+                                      max_rate * .02)
+
+    def tick(self, after_step=None):
         start = time.perf_counter()
         if not np.isfinite(self.data.qpos).all() or not np.isfinite(self.data.qvel).all():
             raise SimulationStop("nonfinite_state")
@@ -295,6 +325,8 @@ class SonicSimulation:
                 self.model.actuator_ctrlrange[self.finger_actuators, 0],
                 self.model.actuator_ctrlrange[self.finger_actuators, 1])
             mujoco.mj_step(self.model, self.data)
+            if after_step is not None:
+                after_step(self)
         error = float(np.sqrt(np.mean((self.data.qpos[self.q_indices] - p[0]) ** 2)))
         self.tracking_errors.append(error)
         self.pose_history.append((float(self.data.time), self.body_pose()))

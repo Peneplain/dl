@@ -155,7 +155,7 @@ class BaselineBringupTests(unittest.TestCase):
             root = Path(directory)
             for name in ("scripts/run_ardy.py", "scripts/ardy_service.py",
                          "scripts/prepare_deploy_motion.py", "scripts/__pycache__/foo.py", "scripts/secret.pt",
-                         ".env", ".env.secret", "checkpoints/model.onnx", "artifacts/run.json",
+                         ".env", ".env.secret", "checkpoints/model.onnx", "output/run.json",
                          "third_party/source.py", "README.md", "configs/baseline.lock.json",
                          "risk_residual/models/model.py", "scripts/train_risk.py",
                          "configs/default.yaml", "docs/experiments.md", "baseline/adapters/joints 2.py"):

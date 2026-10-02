@@ -99,12 +99,86 @@ The parser, constraints, and grasp logic will be documented, so language
 performance is attributed to the complete pipeline. ARDY receives text,
 pose history, and constraints; camera perception is deferred.
 
+The initial B0 collection entry runs one episode by default or a sequential
+batch with deterministic block XY positions. It uses a fixed right-hand
+approach/settle/prepare/reach/lower/close/lift/hold protocol with text, measured history,
+and sparse root-path/wrist/standing constraints supplied to frozen ARDY; frozen SONIC remains the
+body controller. Immutable plans preserve seeds and completed failures on
+resume. This offline collection mode pauses simulated time during generation;
+it does not establish real-time operation or replace the planned instruction
+suite. Pilot scene, hand, and contact thresholds must be calibrated before
+freezing comparative evaluation. No teacher refinement participates in B0.
+The implementation exposes two execution modes: batch collection and manual
+JSON commands. Both start with an empty task; an explicit grasp flag adds the
+tabletop task. Both modes load all frozen models before accepting or executing
+prompts and explicitly report loading completion; planning-only runs load no
+models. Manual commands are independent reset episodes, with an optional
+persistent GUI; inputs received during generation or physical execution are
+discarded. This interface is not yet the proposal's interactive-correction
+subset. Sessions use timestamped batch/manual directories under
+\texttt{output/}, using Asia/Shanghai \texttt{YYMMDD-HHMMSS} names with second
+precision, with flat attempt folders and human-readable per-trial reports.
+Rendering is a separate user-selected step after collection. Phase-focused
+text is a pilot choice to compare against the previous full-task prompts with
+matched seeds and scenes; it does not establish higher physical success.
+The approach extension starts the root an additional 0.45 m behind a target
+0.22 m before the front table edge, with configurable pilot distances. Actual
+MuJoCo table/block/root state grounds the path without camera perception.
+ARDY receives timed root waypoints with free feet for walking. Since the pinned
+SONIC G1 interface does not consume world root XY, the sequencer checks actual
+arrival rather than assuming generated root motion was tracked. Before reach,
+require position error at most 6 cm, heading error at most 12 degrees, horizontal
+speed at most .12 m/s, and both feet on the floor for .4 s continuously.
+A missed or unstable arrival ends the trial. Rebuild standing anchors at the
+arrived pose. A preparation phase then requests an 8-degree waist inclination
+through ARDY torso-orientation conditions while holding the wrists back. The
+pinned G1 has no articulated neck; this is a posture cue, not visual perception.
+Repeat the continuous stability gate before reaching and anchor subsequent
+torso goals to the measured prepared pose. These shared nominal torso conditions
+do not expand the learned residual's arm-only output mask. Approach and
+preparation time are included in the existing 30 s trial budget.
+This change must be validated and frozen consistently across methods; it is a
+new pilot protocol, not part of the earlier prompt-only comparison.
+The current calibration sequencer holds the terminal walking reference during
+settlement. Close and hold also preserve references instead of sampling another
+motion. Reach/lower pre-curl the distal fingers. Descent ends on a measured
+wrist-frame acquisition region, then a checked measured-pose reference is held
+through frozen SONIC while fingers close. Missing alignment or missing sustained
+opposing contact stops the trial. These shared state-based nominal transitions
+are not learned residuals, teacher corrections, or extra user instructions.
+Two hand-only diagnostic trials have passed physical lift/contact/hold checks;
+complete walk-to-grasp success is not yet established. Those partial successes
+must not enter the complete-task success denominator or a verified expert set.
+
+Use one high-level task instruction with automatic phase text, pose history,
+and geometric constraints. ACT is not part of the core comparison: adding a
+trained action-chunk policy would introduce a separate imitation-learning
+system and demonstration budget. Bounded task-level state feedback and static
+holds can be calibrated in the shared baseline without changing frozen models
+or the learned arm-only correction interface.
+
+The assignment comparison is between the nominal reference-generation pipeline
+and learned risk-conditioned arm-reference correction through identical SONIC;
+prompt changes alone do not define a second method. First calibrate the common
+approach workspace, full hand clearance and grasp frame on validation data.
+Do not weaken B0 to create a gain. Freeze common settings and perturbation levels
+before held-out nominal, target-bias and action-latency comparisons. An arm-only
+residual is not expected to repair walking failures or unreachable targets.
+These calibration and learning milestones are not yet demonstrated successes.
+
+For pilot assessment, ``held'' additionally requires opposing thumb and finger
+normal contact above 0.01\,N throughout the two-second clearance interval;
+this operational contact threshold remains subject to validation.
+
 \textbf{State recording and offline visualization.}
 Save the initial state and full MuJoCo robot, hand, and object state at every
 50\,Hz control frame, together with a versioned compiled scene snapshot.
 Offline rendering restores each saved state and recomputes derived geometry,
 without stepping physics or running a policy. Use a fixed third-person camera
-initially; body-attached head/wrist cameras can be added later. Store RGB arrays
+initially; the pilot tabletop collector also records body-attached head/wrist
+cameras. The current visualization CLI defaults to 25 FPS RGB sampled from
+50 Hz saved states, with explicit original state/frame mappings; 50 FPS is
+available when all control frames are needed. Store RGB arrays
 with camera names, simulation timestamps, and control-frame indices in
 \texttt{vision/images.npz}, and optionally encode a video by simulation time.
 Rendered images serve visualization and recording, not core inference inputs.
