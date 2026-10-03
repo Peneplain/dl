@@ -77,7 +77,11 @@ def parser_for_run():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--cube-xy", nargs=2, type=float)
     parser.add_argument("--start-back", type=float, default=DEFAULT_START_BACK,
-                        help="Initial extra distance behind the approach target, in metres (grasp only)")
+                        help="Extra distance behind the approach target, in metres (--grasp --walk only)")
+    parser.add_argument("--walk", action="store_true",
+                        help="Start behind the table and execute the walking approach (grasp only)")
+    parser.add_argument("--direct-start", action="store_true",
+                        help="Compatibility alias for the default no-walk grasp start (grasp only)")
     parser.add_argument("--table-standoff", type=float, default=DEFAULT_TABLE_STANDOFF,
                         help="Target root distance from the front table edge, in metres (grasp only)")
     parser.add_argument("--xy-range", nargs=4, type=float, default=[.36, .46, -.30, -.16])
@@ -98,6 +102,7 @@ def parser_for_run():
 def parse_args(argv=None):
     parser = parser_for_run()
     args = parser.parse_args(argv)
+    resumed = bool(args.resume)
     if args.resume:
         if args.mode != "batch":
             parser.error("--resume is for batch mode")
@@ -112,6 +117,10 @@ def parse_args(argv=None):
                 parser.error("Use only: batch --resume PATH; settings come from plan.json")
             for key, value in config.items():
                 setattr(args, key, Path(value) if key in {"ardy_repo", "sonic_repo", "assets"} else value)
+            # Plans written before --walk used direct_start=False for the walking
+            # path. Preserve that immutable behavior when they are resumed.
+            if "walk" not in config:
+                args.walk = bool(args.grasp) and not bool(config.get("direct_start", False))
         except (OSError, KeyError, ValueError) as error:
             parser.error(str(error))
     elif args.phase_prompts:
@@ -119,6 +128,12 @@ def parse_args(argv=None):
             args.phase_prompts = json.loads(args.phase_prompts.read_text())
         except (OSError, ValueError) as error:
             parser.error(str(error))
+    if args.walk and args.direct_start:
+        parser.error("--walk and --direct-start are mutually exclusive")
+    if not resumed and args.grasp:
+        # A grasp attempt starts at the grounded table approach target unless
+        # the caller explicitly opts into the walking approach.
+        args.direct_start = not args.walk
     if args.batch < 1 or args.seed < 0 or args.seed + args.batch - 1 >= 2**32:
         parser.error("batch must be positive; seeds must fit uint32")
     if args.mode == "manual" and (args.batch != 1 or args.plan_only):
@@ -134,6 +149,10 @@ def parse_args(argv=None):
         parser.error("xy-range must fit X=[.34,.55], Y=[-.38,-.08]")
     if not args.grasp and args.prompt_profile != "focused":
         parser.error("prompt-profile requires --grasp")
+    if not args.grasp and args.walk:
+        parser.error("walk requires --grasp")
+    if not args.grasp and args.direct_start:
+        parser.error("direct-start requires --grasp")
     if not args.grasp and (args.start_back != DEFAULT_START_BACK or args.table_standoff != DEFAULT_TABLE_STANDOFF):
         parser.error("start-back and table-standoff require --grasp")
     try:

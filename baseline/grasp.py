@@ -17,6 +17,7 @@ from baseline.adapters.joints import ISAACLAB_JOINT_NAMES
 
 PHASES = (("approach", 2.0), ("settle", .8), ("prepare", 1.2), ("reach", 3.2), ("lower", 3.2),
           ("close", 2.0), ("lift", 3.2), ("hold", 3.0))
+DIRECT_START_PHASES = PHASES[3:]
 HOLD_PHASES = frozenset({"settle", "close", "hold"})
 DEFAULT_START_BACK = .45
 DEFAULT_TABLE_STANDOFF = .22
@@ -49,6 +50,12 @@ RIGHT_PRESHAPED = {name: (1.3 if name.endswith("_1_joint") and "thumb" not in na
                   for name in RIGHT_CLOSED}
 
 
+def is_hand_body(name):
+    """Include fingers and palms, which the pinned G1 mounts on wrist-yaw bodies."""
+    return (name.startswith(("left_hand_", "right_hand_"))
+            or name in {"left_wrist_yaw_link", "right_wrist_yaw_link"})
+
+
 def initial_body_reference(default):
     """Park the arms behind the table before the first physics step."""
     reference = np.array(default, dtype=float, copy=True)
@@ -67,7 +74,8 @@ def hand_alignment(simulation):
     return {"source": "mujoco_state", "cube_in_wrist_m": local.tolist(), "ready": bool(ready)}
 
 
-def build_scene(repo, path, xy, start_back=DEFAULT_START_BACK, table_standoff=DEFAULT_TABLE_STANDOFF):
+def build_scene(repo, path, xy, start_back=DEFAULT_START_BACK, table_standoff=DEFAULT_TABLE_STANDOFF,
+                direct_start=False):
     """Extend pinned SONIC assets, without modifying their source checkout."""
     xy = np.asarray(xy, dtype=float)
     if xy.shape != (2,) or not np.isfinite(xy).all():
@@ -75,8 +83,9 @@ def build_scene(repo, path, xy, start_back=DEFAULT_START_BACK, table_standoff=DE
     # Keep the whole block on the tabletop and away from the initial robot.
     if not (.34 <= xy[0] <= .55 and -.38 <= xy[1] <= -.08):
         raise ValueError("Cube XY outside the right-hand pilot workspace")
-    if not np.isfinite([start_back, table_standoff]).all() or not (.05 <= start_back <= .6 and .20 <= table_standoff <= .55):
-        raise ValueError("start_back must be .05-.6 m; table_standoff must be .20-.55 m")
+    if (not np.isfinite([start_back, table_standoff]).all()
+            or not (0 <= start_back <= .6 and .20 <= table_standoff <= .55)):
+        raise ValueError("start_back must be 0-.6 m; table_standoff must be .20-.55 m")
     directory = Path(repo).resolve() / "gear_sonic/data/robot_model/model_data/g1"
     robot = directory / "g1_29dof_with_hand.xml"
     root = ET.parse(robot).getroot()
@@ -97,6 +106,8 @@ def build_scene(repo, path, xy, start_back=DEFAULT_START_BACK, table_standoff=DE
     pelvis = root.find(".//body[@name='pelvis']")
     initial_position = np.fromstring(pelvis.get("pos"), sep=" ")
     initial_position[0] = .52 - .21 - table_standoff - start_back
+    if direct_start:
+        initial_position[1] = xy[1] + .14
     pelvis.set("pos", " ".join(str(float(v)) for v in initial_position))
     ET.SubElement(world, "geom", name="task_table", type="box",
                   pos="0.52 -0.20 0.67", size="0.21 0.24 0.03", rgba="0.45 0.3 0.18 1",
@@ -134,6 +145,7 @@ def build_scene(repo, path, xy, start_back=DEFAULT_START_BACK, table_standoff=DE
             "block_mass_kg": .08, "cube_xy_m": xy.tolist(), "root_free": True,
             "robot_start_xy_m": initial_position[:2].tolist(),
             "start_back_m": start_back, "table_standoff_m": table_standoff,
+            "direct_start": bool(direct_start),
             "grounding_source": "mujoco_state", "camera_input": False,
             "approach_position_tolerance_m": APPROACH_POSITION_TOLERANCE,
             "approach_speed_limit_mps": APPROACH_SPEED_LIMIT,
@@ -145,11 +157,13 @@ def build_scene(repo, path, xy, start_back=DEFAULT_START_BACK, table_standoff=DE
             "finger_closed_rad": RIGHT_CLOSED, "finger_rate_rad_per_second": 2.5,
             "finger_preshaped_rad": RIGHT_PRESHAPED,
             "initial_arm_angles_rad": {"shoulder_pitch": .4, "elbow": .8},
-            "phases": [list(p) for p in PHASES], "hold_phases": sorted(HOLD_PHASES),
+            "phases": [list(p) for p in (DIRECT_START_PHASES if direct_start else PHASES)],
+            "hold_phases": sorted(HOLD_PHASES),
             "reference_transition_seconds": {"approach": .2, "generated_arm": .4,
                                              "measured_acquisition_hold": .1},
             "acquisition_region_wrist_m": [[.095, .175], [.005, .085], [-.040, .020]],
-            "prohibited_contacts": ["robot-table", "non-right-hand robot-block",
+            "hand_table_contact_allowed": True,
+            "prohibited_contacts": ["non-hand robot-table", "non-right-hand robot-block",
                                     "non-foot robot-floor", "block-floor"],
             "cameras": ["head_camera", "wrist_camera"]}
 
@@ -307,6 +321,7 @@ class GraspEvaluator:
         self.max_clearance = -1.0
         self.success_time = None
         self.contact_steps = 0
+        self.hand_table_contact_steps = 0
         self.samples = 0
         self.first_failure = None
         self.opposing_contact_start = None
@@ -327,6 +342,7 @@ class GraspEvaluator:
         mujoco.mju_quat2Mat(mat, data.qpos[self.block_q + 3:self.block_q + 7])
         clearance = float(pos[2] - np.abs(mat.reshape(3, 3)[2]) @ model.geom_size[self.block_geom] - .70)
         thumb, finger = 0.0, 0.0
+        hand_table_contact = False
         for contact_index, contact in enumerate(data.contact[:data.ncon]):
             if contact.dist > 0:
                 continue
@@ -335,8 +351,12 @@ class GraspEvaluator:
             bodies = [model.body(int(model.geom_bodyid[g])).name or "" for g in geoms]
             previous_failure = self.failure
             if any(n.startswith("task_table") or n.startswith("task_leg") for n in names):
-                if any(model.geom_bodyid[g] != 0 and g != self.block_geom for g in geoms):
-                    self.failure = self.failure or "prohibited_robot_table_contact"
+                for geom, body in zip(geoms, bodies):
+                    if model.geom_bodyid[geom] != 0 and geom != self.block_geom:
+                        if is_hand_body(body):
+                            hand_table_contact = True
+                        else:
+                            self.failure = self.failure or "prohibited_robot_table_contact"
             if "floor" in names:
                 other = geoms[1 - names.index("floor")]
                 body = model.body(int(model.geom_bodyid[other])).name or ""
@@ -372,6 +392,7 @@ class GraspEvaluator:
             self.opposing_contact_start = None
             self.opposing_contact_seconds = 0.
         self.contact_steps += int(grasp_contact)
+        self.hand_table_contact_steps += int(hand_table_contact)
         held = 0.0
         if (self.phase in {"lift", "hold"} and clearance >= .05 and grasp_contact
                 and self.failure is None and data.time <= 30.0 + 1e-8):
@@ -398,6 +419,7 @@ class GraspEvaluator:
                 "failure_reason": self.failure if self.failure else (None if success else "timeout"),
                 "max_block_clearance_m": self.max_clearance, "max_continuous_hold_seconds": self.max_hold,
                 "opposing_finger_contact_steps": self.contact_steps, "physics_samples": self.samples,
+                "hand_table_contact_steps": self.hand_table_contact_steps,
                 "assessment_hz": 200, "user_corrections": 0, "teacher_used": False,
                 "first_prohibited_contact": self.first_failure,
                 "learned_correction_used": False, "expert_valid": False}

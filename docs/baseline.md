@@ -11,10 +11,11 @@ its boundaries; it is not a second command list.
 B0 combines the pinned `ARDY-G1-RP-25FPS-Horizon8` generator, frozen SONIC
 ONNX policy and a free-base G1 MuJoCo scene. The verified executor supports
 standing and arm-motion bring-up. The [B0 grasp collector](grasp.md) adds a
-pilot table/block scene, GT grounding, a farther initial position, root-path
-approach and settling checks, right-hand phases, spatial constraints, fingers,
-collision stops and episode statistics. Successful
-contact grasp/lift and calibrated clearance settings remain unverified.
+pilot table/block scene, GT grounding, a default initial position before the
+table, an optional `--walk` root-path approach and settling checks, right-hand
+phases, spatial constraints, fingers, collision stops and episode statistics.
+Manipulation-only contact grasp/lift has pilot evidence; complete walk-and-grasp
+success and calibrated evaluation settings remain unverified.
 Risk/Residual models and their training pipeline are not implemented yet.
 
 All task data and future demonstrations are simulation-only. Risk/Residual
@@ -132,6 +133,11 @@ remains outside the core study.
 
 Synthetic fixtures validate state restoration, named cameras, timestamps,
 RGB/MP4 generation, failure reports and overwrite protection. Actual checks and
-their limits are recorded in [verification.md](verification.md). The optional tabletop task has been physically exercised, including
-collision stops and timeouts, but no successful grasp/lift is established.
+their limits are recorded in [verification.md](verification.md). The optional
+tabletop task has been physically exercised, including collision stops and
+timeouts.
+Historical direct-start pilots have achieved grasp/lift. Those measurements
+predate the allowed hand-table contact policy and complete hold recording.
+Two fresh manipulation pilots verified the revised collection behavior;
+their evidence is recorded separately in the verification document.
 Synthetic rendering fixtures do not establish physical G1 grasp success.

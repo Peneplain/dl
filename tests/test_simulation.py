@@ -13,6 +13,18 @@ from baseline.simulation import SonicSimulation
 
 
 class SimulationReferenceTests(unittest.TestCase):
+    def test_reference_limits_apply_to_all_29_body_joints(self):
+        simulation = SonicSimulation.__new__(SonicSimulation)
+        lower = np.arange(29, dtype=np.float32) / 100
+        upper = lower + 1
+        simulation.ranges = np.stack([lower, upper], axis=1)
+        reference = ReferenceSequence([0., .02],
+                                      np.stack([lower - .04, upper + .04]),
+                                      [[1, 0, 0, 0], [1, 0, 0, 0]])
+        checked = simulation.validate_reference(reference)
+        np.testing.assert_allclose(checked.joint_pos[0], lower)
+        np.testing.assert_allclose(checked.joint_pos[1], upper)
+
     def test_acquisition_hold_uses_actual_pose_without_mutating_physics(self):
         simulation = SonicSimulation.__new__(SonicSimulation)
         pose = np.r_[[.1, 0., .75, 1., 0., 0., 0.], np.arange(29) / 100.]

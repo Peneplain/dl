@@ -15,7 +15,8 @@ from baseline.common import ROOT
 from baseline.adapters.joints import ISAACLAB_JOINT_NAMES
 from baseline.grasp import (GraspEvaluator, build_scene, phase_constraints, wrist_pose,
                             ground_scene, approach_constraints, settle_constraints, approach_state,
-                            PREPARE_PITCH_RAD, hand_alignment, initial_body_reference)
+                            PREPARE_PITCH_RAD, hand_alignment, initial_body_reference,
+                            DIRECT_START_PHASES)
 from baseline.simulation import SonicSimulation
 
 
@@ -83,7 +84,7 @@ class GraspMetricTests(unittest.TestCase):
             finally:
                 evaluator.close()
 
-    def test_rotated_lowest_point_and_collision_stop(self):
+    def test_rotated_lowest_point(self):
         with tempfile.TemporaryDirectory() as directory:
             sim, evaluator = self.fixture(directory)
             try:
@@ -92,14 +93,56 @@ class GraspMetricTests(unittest.TestCase):
                     np.cos(np.pi / 8), np.sin(np.pi / 8), 0, 0]
                 evaluator.observe(sim)
                 self.assertAlmostEqual(evaluator.max_clearance, .085 - np.sqrt(2) * .03)
-                # Put the actual hand into the table and recompute contacts.
-                sim.data.qpos[2] = .55
-                mujoco.mj_forward(sim.model, sim.data)
-                sim.data.time = .005
-                evaluator.observe(sim)
-                self.assertEqual(evaluator.failure, "prohibited_robot_table_contact")
             finally:
                 evaluator.close()
+
+    def test_hand_table_contacts_are_allowed_but_other_robot_contacts_stop(self):
+        import xml.etree.ElementTree as ET
+
+        cases = [(name, True) for name in (
+            "right_hand_index_1_link", "left_hand_thumb_1_link",
+            "right_hand_palm_link", "left_hand_palm_link",
+            "right_wrist_yaw_link", "left_wrist_yaw_link")]
+        cases += [(name, False) for name in (
+            "right_wrist_pitch_link", "right_elbow_link", "torso_link")]
+        for table_name in ("task_table", "task_leg_fixture"):
+            for body_name, allowed in cases:
+                with self.subTest(table=table_name, body=body_name), \
+                        tempfile.TemporaryDirectory() as directory:
+                    xml = ET.fromstring(FIXTURE)
+                    xml.find(".//geom[@name='task_table']").set("name", table_name)
+                    wrist = xml.find(".//body[@name='right_wrist_yaw_link']")
+                    for child in list(wrist):
+                        wrist.remove(child)
+                    if body_name == "right_wrist_yaw_link":
+                        contact_body = wrist
+                        contact_body.set("pos", ".4 -.2 -.095")
+                    else:
+                        contact_body = ET.SubElement(xml.find(".//body[@name='pelvis']"),
+                                                     "body", name=body_name, pos=".4 -.2 -.095")
+                    ET.SubElement(contact_body, "geom", type="box", size=".02 .012 .02", mass=".1")
+                    model = mujoco.MjModel.from_xml_string(ET.tostring(xml, encoding="unicode"))
+                    data = mujoco.MjData(model)
+                    mujoco.mj_forward(model, data)
+                    sim = SimpleNamespace(model=model, data=data, root_q=0, frame_index=0,
+                                          finger_names=(), finger_q=np.array([], dtype=int),
+                                          finger_target=np.zeros(0))
+                    evaluator = GraspEvaluator(sim, directory)
+                    try:
+                        self.assertGreater(data.ncon, 0)
+                        evaluator.observe(sim)
+                        if allowed:
+                            self.assertIsNone(evaluator.failure)
+                            self.assertIsNone(evaluator.first_failure)
+                            self.assertEqual(evaluator.summary()["hand_table_contact_steps"], 1)
+                        else:
+                            self.assertEqual(evaluator.failure, "prohibited_robot_table_contact")
+                            self.assertIn(body_name, evaluator.first_failure["bodies"])
+                        # Table contact cannot substitute for opposing block contacts.
+                        self.assertEqual(evaluator.contact_steps, 0)
+                        self.assertFalse(evaluator.summary()["task_success"])
+                    finally:
+                        evaluator.close()
 
     def test_named_finger_bounds_and_rate(self):
         sim = SonicSimulation.__new__(SonicSimulation)
@@ -147,6 +190,24 @@ class GraspMetricTests(unittest.TestCase):
             self.assertAlmostEqual(model.qpos0[root_q], -.36)
             self.assertEqual(settings["grounding_source"], "mujoco_state")
             self.assertFalse(settings["camera_input"])
+
+    def test_direct_start_places_root_at_target_and_skips_locomotion_phases(self):
+        repo = ROOT / "third_party/sonic"
+        if not repo.is_dir():
+            self.skipTest("Pinned SONIC source/meshes not installed")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "scene.xml"
+            settings = build_scene(repo, path, [.4, -.22], start_back=0., direct_start=True)
+            model = mujoco.MjModel.from_xml_path(str(path))
+            root_q = int(model.joint("floating_base_joint").qposadr[0])
+            np.testing.assert_allclose(model.qpos0[root_q:root_q + 2], [.09, -.08], atol=1e-8)
+            self.assertTrue(settings["direct_start"])
+            self.assertTrue(settings["hand_table_contact_allowed"])
+            self.assertIn("non-hand robot-table", settings["prohibited_contacts"])
+            np.testing.assert_allclose(settings["robot_start_xy_m"], [.09, -.08], atol=1e-8)
+            self.assertEqual([name for name, _ in DIRECT_START_PHASES],
+                             ["reach", "lower", "close", "lift", "hold"])
+            self.assertEqual(settings["phases"], [list(phase) for phase in DIRECT_START_PHASES])
 
     def test_acquisition_region_uses_measured_wrist_frame(self):
         with tempfile.TemporaryDirectory() as directory:

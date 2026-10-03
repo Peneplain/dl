@@ -19,6 +19,7 @@ Run these commands from the server host in ~/dl:
   smoke       Check synthetic reference conversion (--out required)
   batch       Collect attempts; --batch N (default 1), --grasp enables block task
   manual      Enter prompt JSON one attempt at a time; optional --gui / --grasp
+              Grasp starts at the table; add --walk to approach from farther back
   render      Render selected attempts or --all after collection
   ardy        Generate a reference only (run_ardy.py arguments)
   service     Keep ARDY loaded for JSONL requests (ardy_service.py arguments)

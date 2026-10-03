@@ -16,8 +16,14 @@ cd ~/dl
 ./run.sh batch --grasp
 ./run.sh batch --grasp --batch 20 --seed 42
 
-# Start farther back, then walk to a grounded position before reaching
-./run.sh batch --grasp --seed 42 --start-back .45 --table-standoff .22
+# Start at the grounded table approach target (the default; no walking)
+./run.sh batch --grasp --seed 42 --table-standoff .22
+
+# Opt into starting farther back and walking to the target
+./run.sh batch --grasp --walk --seed 42 --start-back .45 --table-standoff .22
+
+# Skip locomotion and calibrate manipulation from the shared approach target
+./run.sh batch --grasp --direct-start --batch 2 --seed 42 --cube-xy .40 -.22 --table-standoff .20
 
 # Fixed position for paired prompt comparisons
 ./run.sh batch --grasp --batch 2 --seed 42 --cube-xy .40 -.22
@@ -36,22 +42,29 @@ Repeating the same arguments reproduces the sampling plan; folder timestamps
 do not change seeds. Default XY bounds are X=[.36,.46], Y=[-.30,-.16] metres.
 Use `--cube-xy X Y` for a fixed position or
 `--xy-range XMIN XMAX YMIN YMAX` to change the range. See [task details](grasp.md)
-for supported bounds. The grasp scene starts the robot an additional 0.45 m
-behind a target 0.22 m from the front table edge. `--start-back` (.05-.6 m) and
-`--table-standoff` (.20-.55 m) configure these distances. They measure root
-position, not fingertip clearance. The default root starts at X=-.36 m and
-approaches X=-.11 m for the current table. These are pilot settings.
+for supported bounds. The default scene places the robot at a target 0.22 m from
+the front table edge. With `--walk`, `--start-back` (.05-.6 m) adds the initial
+separation before walking to that target; `--table-standoff` (.20-.55 m)
+configures the target distance. These values measure root position, not fingertip
+clearance. The default root is the grounded approach target; the walking default
+starts at X=-.36 m and approaches X=.09 m for the current table. Both hands
+may touch the table; forearm, torso, and leg contacts still stop the trial.
+These are pilot settings.
 
-The task now runs approach, settle, prepare, reach, lower, close, lift, and hold. MuJoCo
-state provides table/block locations and the root target; images are not model
-inputs. An attempt must reach the target and settle on both feet before preparation,
-then pass the same continuous stability check before reaching. The G1 head is
-rigid; `prepare` requests a gentle 8-degree waist inclination through ARDY.
+The default task runs the two-second stand, reach, lower, close, lift, and hold.
+Pass `--walk` to add approach, settle, and preparation before the hand phases.
+`--direct-start` remains a compatibility alias for the default no-walk mode. The
+no-walk path is a manipulation calibration, not a full walk-and-grasp trial.
+MuJoCo state provides table/block locations and the root target; images are not
+model inputs. A walking attempt must reach the target and settle on both feet
+before preparation, then pass the same continuous stability check before reaching.
+The G1 head is rigid; `prepare` requests a gentle 8-degree waist inclination
+through ARDY.
 `prepare_not_settled` identifies an unstable preparation; `prepare_target_drift`
 identifies excessive position drift during preparation. Failure
 reasons `approach_target_missed`, `approach_not_settled`, and `approach_too_close`
-identify approach failures; they count as failed trials. The full approach and
-grasp must still finish within the same 30-second simulation budget.
+identify walking failures; they count as failed trials. The selected path must
+still finish within the same 30-second simulation budget.
 
 The terminal prints `[SUCCESS]`, `[FAILED]`, or `[COMPLETED]` for each attempt
 and lists all results at the end. Open **`summary.txt` or `summary.md`** in the
@@ -88,8 +101,12 @@ states were saved. `--all` includes failed and interrupted directories; missing
 or incomplete states produce an individual error while other attempts continue.
 `render-TIME.json` records every result from that rendering command.
 
-Defaults are third-person, 640x480, 25 FPS, with H.264 CRF 18 encoding.
-This is twice the previous width and height; additional pixels increase rendering
+Defaults are third-person, 640x480, 25 FPS, with H.264 CRF 18 encoding. The
+complete configured hold phase is retained after the two-second success
+threshold, so the final holding motion is present in the rollout and rendered
+video, unless a failure or the 30-second timeout stops the trial. There is no
+14-second video cap. Missing motion in an old rollout requires recollection;
+rendering alone cannot add it. This is twice the previous width and height; additional pixels increase rendering
 cost and RGB storage, not video duration. For 720p, use `--width 1280 --height 720`. Rendering displays progress and
 estimated remaining time; software rendering can be much slower than simulation.
 Use `--fps 50` to render every 50 Hz control frame, or `--no-video` for RGB only.

@@ -6,8 +6,11 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+
+import numpy as np
 
 from baseline.common import write_json
 from baseline.console import ManualConsole
@@ -48,6 +51,85 @@ class SessionTests(unittest.TestCase):
         for argv in (["batch", "--gui"], ["batch", "--batch", "0"], ["manual", "--batch", "2"]):
             with self.assertRaises(SystemExit):
                 parse_args(argv)
+        with self.assertRaises(SystemExit):
+            parse_args(["batch", "--direct-start"])
+        self.assertTrue(parse_args(["batch", "--grasp", "--direct-start"]).direct_start)
+
+    def test_grasp_starts_at_table_unless_walk_is_requested(self):
+        for mode in ("batch", "manual"):
+            args = parse_args([mode, "--grasp"])
+            self.assertTrue(args.direct_start)
+            self.assertFalse(args.walk)
+            walking = parse_args([mode, "--grasp", "--walk"])
+            self.assertFalse(walking.direct_start)
+            self.assertTrue(walking.walk)
+        with redirect_stdout(io.StringIO()):
+            for argv in (["batch", "--walk"],
+                         ["batch", "--grasp", "--walk", "--direct-start"]):
+                with self.assertRaises(SystemExit):
+                    parse_args(argv)
+
+    def test_grasp_records_full_hold_after_success_and_still_stops_on_failure(self):
+        from baseline.execution import ExecutionRuntime
+        from baseline.simulation import SimulationStop
+
+        for fail_in_hold in (False, True):
+            with self.subTest(fail_in_hold=fail_in_hold), \
+                    tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
+                args = parse_args(["batch", "--grasp"])
+                runtime = ExecutionRuntime(args, directory)
+                simulation = Mock()
+                simulation.data = SimpleNamespace(time=0.)
+                simulation.model.qpos0 = np.zeros(14)
+                simulation.model.joint.return_value.qposadr = [7]
+                simulation.root_q = 0
+                simulation.body_pose.return_value = np.r_[np.zeros(3), 1., np.zeros(32)]
+                simulation.install.side_effect = lambda *a, **kw: setattr(
+                    simulation, "end_time", simulation.data.time + .1)
+                simulation.summary.side_effect = lambda: {"simulation_seconds": simulation.data.time}
+                runtime.simulation = simulation
+                runtime.ensure_simulation = Mock(return_value=simulation)
+                runtime.generate = Mock(return_value={"status": "passed"})
+                evaluator = Mock(phase="stand", failure=None, success_time=None,
+                                 opposing_contact_seconds=.2)
+                evaluator.summary.side_effect = lambda: {
+                    "task_success": evaluator.success_time is not None and evaluator.failure is None,
+                    "success_sim_time": evaluator.success_time,
+                    "failure_reason": evaluator.failure}
+                hold_times = []
+                def tick(_):
+                    simulation.data.time = round(simulation.data.time + .02, 8)
+                    if evaluator.phase == "lift" and evaluator.success_time is None:
+                        evaluator.success_time = simulation.data.time
+                    if evaluator.phase == "hold":
+                        hold_times.append(simulation.data.time)
+                        if fail_in_hold and len(hold_times) == 10:
+                            evaluator.failure = "fall"
+                            raise SimulationStop("fall")
+                runtime.tick = Mock(side_effect=tick)
+                try:
+                    with patch("baseline.execution.build_scene", return_value={"robot_start_xy_m": [.09, -.08]}), \
+                            patch("baseline.execution.GraspEvaluator", return_value=evaluator), \
+                            patch("baseline.execution.approach_state", return_value={"ready": True}), \
+                            patch("baseline.execution.ground_scene", return_value={}), \
+                            patch("baseline.execution.wrist_pose", return_value=(np.zeros(3), np.eye(3))), \
+                            patch("baseline.execution.phase_constraints", return_value={}), \
+                            patch("baseline.execution.hand_alignment", return_value={"ready": True}):
+                        result = runtime.run(parse_request({}, 1, args), Path(directory), "synthetic-plan")
+                    self.assertLess(result["success_sim_time"], hold_times[0])
+                    self.assertEqual([entry["phase"] for entry in result["phase_reports"]],
+                                     ["reach", "lower", "close", "lift", "hold"])
+                    if fail_in_hold:
+                        self.assertFalse(result["task_success"])
+                        self.assertEqual(result["failure_reason"], "fall")
+                        self.assertEqual(len(hold_times), 10)
+                    else:
+                        self.assertTrue(result["task_success"])
+                        self.assertEqual(len(hold_times), 150)
+                        self.assertAlmostEqual(hold_times[-1] - hold_times[0] + .02, 3.)
+                        self.assertAlmostEqual(result["simulation_seconds"], hold_times[-1])
+                finally:
+                    runtime.close()
 
     def test_deterministic_requests_flat_attempts_and_failure_denominator(self):
         args = parse_args(["batch", "--grasp", "--batch", "3", "--seed", "42"])
@@ -98,6 +180,19 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(make_plan(config_for(args), original["requests"]), original)
             with self.assertRaises(SystemExit):
                 parse_args(["batch", "--resume", str(output), "--seed", "9"])
+
+    def test_legacy_plan_keeps_its_original_walking_selection(self):
+        for grasp, direct_start in ((False, False), (True, False), (True, True)):
+            with self.subTest(grasp=grasp, direct_start=direct_start), \
+                    tempfile.TemporaryDirectory() as directory:
+                args = parse_args(["batch", "--grasp"] if grasp else ["batch"])
+                config = config_for(args)
+                config.pop("walk")
+                config["direct_start"] = direct_start
+                write_json(Path(directory) / "plan.json", {"schema_version": 2, "config": config})
+                resumed = parse_args(["batch", "--resume", directory])
+                self.assertEqual(resumed.walk, grasp and not direct_start)
+                self.assertEqual(resumed.direct_start, direct_start)
 
     def test_resume_rejects_changed_source_or_completed_evidence(self):
         from baseline.common import sha256

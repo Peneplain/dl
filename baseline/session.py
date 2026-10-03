@@ -18,7 +18,7 @@ from baseline.common import LOCK, ROOT, sha256, write_json
 TERMINAL = {"passed", "failed", "stopped"}
 REASONS = {
     "timeout": "Timeout: lift-and-hold criteria not met",
-    "prohibited_robot_table_contact": "Robot-table contact",
+    "prohibited_robot_table_contact": "Prohibited robot-table contact",
     "prohibited_robot_block_contact": "Non-right-hand robot-block contact",
     "prohibited_robot_floor_contact": "Non-foot robot-floor contact",
     "block_floor_contact": "Block-floor contact",
@@ -32,6 +32,7 @@ REASONS = {
     "grasp_alignment_missed": "Hand did not reach the block acquisition region",
     "grasp_not_acquired": "Closing did not establish stable opposing finger contacts",
     "approach_too_close": "Walking crossed the table standoff limit",
+    "direct_start_not_settled": "Direct-start pose did not remain stable before manipulation",
 }
 
 

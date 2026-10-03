@@ -7,9 +7,9 @@ import sys
 import time
 
 from baseline.common import sha256, write_json
-from baseline.grasp import (GraspEvaluator, PHASES, RIGHT_CLOSED, build_scene,
-                            phase_constraints, phase_prompt, wrist_pose, ground_scene,
-                            approach_constraints, approach_state,
+from baseline.grasp import (GraspEvaluator, PHASES, DIRECT_START_PHASES, RIGHT_CLOSED,
+                            build_scene, phase_constraints, phase_prompt, wrist_pose,
+                            ground_scene, approach_constraints, approach_state,
                             APPROACH_POSITION_TOLERANCE, SETTLE_HOLD_SECONDS,
                             HOLD_PHASES, RIGHT_PRESHAPED, initial_body_reference, hand_alignment)
 from baseline.simulation import SimulationStop, SonicSimulation
@@ -37,7 +37,8 @@ class ExecutionRuntime:
             if self.args.grasp:
                 scene = self.session / "scene.xml"
                 build_scene(self.args.sonic_repo, scene, self.args.cube_xy or [.40, -.22],
-                            self.args.start_back, self.args.table_standoff)
+                            0.0 if self.args.direct_start else self.args.start_back,
+                            self.args.table_standoff, direct_start=self.args.direct_start)
             self.simulation = SonicSimulation(self.args.assets, self.args.sonic_repo, None,
                                              policy=self.policy, scene=scene, gui=self.args.gui,
                                              initial_body_reference=initial_body_reference(
@@ -135,8 +136,10 @@ class ExecutionRuntime:
             simulation = self.ensure_simulation()
             if self.args.grasp:
                 scene = output / "scene.xml"
+                start_back = 0.0 if self.args.direct_start else self.args.start_back
                 settings = build_scene(self.args.sonic_repo, scene, request["cube_xy"],
-                                       self.args.start_back, self.args.table_standoff)
+                                       start_back, self.args.table_standoff,
+                                       direct_start=self.args.direct_start)
                 settings["prompt_profile"] = request["prompt_profile"]
                 write_json(output / "settings.json", settings)
                 block = int(simulation.model.joint("task_block_free").qposadr[0])
@@ -148,12 +151,32 @@ class ExecutionRuntime:
             if self.args.grasp:
                 evaluator = GraspEvaluator(simulation, output)
             stage("standing")
+            settled_since = None
+            direct_start_state = None
             while simulation.data.time < 2.0 - 1e-8:
                 self.tick(evaluator)
+                if evaluator and self.args.direct_start:
+                    direct_start_state = approach_state(simulation, self.args.table_standoff)
+                    if direct_start_state["ready"]:
+                        if settled_since is None:
+                            settled_since = float(simulation.data.time)
+                    else:
+                        settled_since = None
             if self.args.grasp:
+                if self.args.direct_start:
+                    if direct_start_state is None:
+                        direct_start_state = approach_state(simulation, self.args.table_standoff)
+                    direct_start_state = dict(direct_start_state)
+                    direct_start_state["continuous_settle_seconds"] = (
+                        float(simulation.data.time) - settled_since if settled_since is not None else 0.0)
+                    final["direct_start_result"] = direct_start_state
+                    simulation.event("direct_start_assessed", **direct_start_state)
+                    if (not direct_start_state["ready"] or settled_since is None or
+                            simulation.data.time - settled_since < SETTLE_HOLD_SECONDS - 1e-8):
+                        raise SimulationStop("direct_start_not_settled")
                 standing = simulation.body_pose().copy()
                 _, standing_rotation = wrist_pose(simulation)
-                phases = PHASES
+                phases = DIRECT_START_PHASES if self.args.direct_start else PHASES
             else:
                 phases = (("motion", request["duration"]),) if request["prompt"] or request.get("reference") else ()
             for phase_index, (phase, duration) in enumerate(phases):
@@ -232,8 +255,6 @@ class ExecutionRuntime:
                                 settled_since = None
                             elif settled_since is None:
                                 settled_since = float(simulation.data.time)
-                    if evaluator and evaluator.success_time is not None:
-                        break
                 if evaluator and phase in {"settle", "prepare"}:
                     final["approach_result" if phase == "settle" else "prepare_result"] = arrival
                     arrival["continuous_settle_seconds"] = (float(simulation.data.time) - settled_since) if settled_since is not None else 0.
@@ -251,11 +272,13 @@ class ExecutionRuntime:
                     raise SimulationStop("grasp_alignment_missed")
                 if evaluator and phase == "close" and evaluator.opposing_contact_seconds < .1:
                     raise SimulationStop("grasp_not_acquired")
-                if evaluator and evaluator.success_time is not None:
-                    break
             if evaluator:
                 stage("hold")
                 evaluator.phase = "hold"
+                # The configured hold phase above is always recorded in full,
+                # including the tail after the two-second success threshold.
+                # If it did not succeed there, continue holding until the
+                # common 30-second timeout so a late success remains possible.
                 while simulation.data.time < 30 - 1e-8 and evaluator.success_time is None:
                     simulation.command_fingers(RIGHT_CLOSED)
                     self.tick(evaluator)

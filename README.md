@@ -139,8 +139,13 @@ GUI. Both preload SONIC, ARDY, and the text encoder, then display an explicit
 model-ready banner before accepting or executing prompts. Both use
 `baseline/execution.py`, reset per attempt and save full 50 Hz
 states. Defaults have no prompt or task, only a robot and ground. `--grasp`
-enables the pilot table/block scene, simulator-state grounding, an initial
-backoff, approach, settle, and upper-body preparation, then five hand phases.
+enables the pilot table/block scene and simulator-state grounding. By default,
+the free base starts at the grounded table target before physics, passes a
+two-second stable stand check, then runs reach, lower, close, lift, and hold.
+Add `--walk` to start farther back and run approach, settle, and upper-body
+preparation before those hand phases. `--direct-start` remains a compatibility
+alias for the default start. Manipulation-only results and walk-and-grasp
+results are recorded separately.
 Preparation requests an 8-degree waist inclination because this G1 has a rigid
 head; both feet must settle again before the arm reach. Root paths and wrist
 constraints condition ARDY without camera inputs. Actual arrival and stability
@@ -161,6 +166,11 @@ state grounding. Settle, close and hold preserve checked references. A measured
 hand/block alignment gate ends descent before finger closure; the shared
 controller then holds measured posture through frozen SONIC. Initial arms are
 parked behind the table. Default extra backoff is .45 m and final standoff .22 m.
+The extra backoff applies only with `--walk`. Both hands, including palms and
+fingers, may contact the table; other robot-table contacts still stop the trial.
+Contact physics remains active and allowed hand-table contacts are counted.
+The complete three-second hold phase is recorded even after the two-second
+success threshold is reached, subject to failure stops and the 30-second timeout.
 These are nominal rules shared by all future methods, not learned corrections.
 
 Two isolated ARDY–SONIC hand trials have physically lifted the block and held it
@@ -171,6 +181,20 @@ contact. The integrated state sequencer remains a calibration checkpoint.
 Risk/Residual learning remains planned. See
 [verification.md](docs/verification.md) for actual evidence and video links, and
 [prompts.md](docs/prompts.md) for prompt rationale.
+
+The direct-start calibration has since produced two additional grasp-and-lift
+successes in four attempts at a 0.20 m standoff; under the historical contact
+rules, the other two stopped on a right middle-finger/table collision.
+Those measurements predate the allowed hand-table contact rule.
+No grip-force change was needed, and no
+post-lift slipping was observed. These are manipulation-only pilots, not complete
+B0 results.
+
+Under the revised hand-table contact rule, two fresh manipulation pilots at
+0.20 m standoff (seeds 42 and 43) passed, with the complete three-second final
+hold recorded. Their rollouts last 17.18 s and 17.76 s. These exploratory runs
+verify the revised collector behavior; they are separate from the planned
+paired evaluation and the historical contact-policy results.
 
 The baseline setup and inference scripts run independently of learning code.
 Learned corrections, training and data tooling belong in separate modules that

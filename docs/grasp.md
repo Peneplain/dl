@@ -14,18 +14,27 @@ Models persist, but physics, fingers, SONIC history and buffers reset per attemp
 
 ## Execution and assessment
 
-The sequencer starts with a two-second SONIC stand farther from the table, then
-runs approach (2 s), settle (.8 s), prepare (1.2 s), reach (3.2 s), lower
-(3.2 s maximum), close (2 s), lift (3.2 s), and hold (3 s).
+The sequencer starts with a two-second SONIC stand at the grounded table target,
+then runs reach (3.2 s), lower (3.2 s maximum), close (2 s), lift (3.2 s),
+and hold (3 s). With `--walk`, the robot starts farther back and adds approach
+(2 s), settle (.8 s), and prepare (1.2 s) before reaching.
 Approach transitions take .2 s; generated arm references take .4 s.
 Acquisition switches to a measured-pose hold through SONIC over .1 s. The whole trial,
 including approach, remains limited to 30 simulated seconds.
 
-The default root starts at X=-.36 m, 0.67 m before the table's front edge.
-`--table-standoff .22` places the approach root target 0.22 m before that edge;
-`--start-back .45` adds 0.45 m of initial separation. The initial root position
+The default root starts at X=.09 m, 0.22 m before the table's front edge,
+with lateral position aligned to the block. `--table-standoff .22` controls
+that target distance. With `--walk`, `--start-back .45` adds 0.45 m of initial
+separation and starts the root at X=-.36 m. The initial root position
 is part of the scene/reset only. All subsequent displacement must result from
 SONIC torques and free-base physics.
+
+The default manipulation path omits approach, settle, and preparation;
+`--direct-start` remains a compatibility alias for this no-walk mode.
+The normal two-second stand must
+still pass the shared position, heading, speed, and double-foot stability gate
+before reach begins. Direct-start results assess grasp mechanics only and must
+not be reported as full walk-and-grasp success or pooled with full-task trials.
 
 `ground_scene` reads the actual table geometry, dynamic block pose, and robot
 pose from MuJoCo. It computes world-space and root-relative object positions,
@@ -117,11 +126,19 @@ above the 0.70 m tabletop, maintained for two continuous seconds within 30 s,
 with opposing thumb and index/middle contacts (>0.01 N normal force) and no
 fall/prohibited collision. Interrupted contact resets the hold interval.
 Open-hand phases cannot trigger a missing-grasp failure. The collector ends
-when the success criterion is met, at a failure stop, or at the 30 s timeout.
+after the complete configured three-second hold phase, at a failure stop, or
+at the 30 s timeout. Reaching the success threshold during lift or hold does
+not truncate these phases. If the configured hold finishes without success,
+the collector continues holding until success or timeout. A later prohibited
+contact or fall still invalidates an earlier success. Video duration follows
+recorded simulation time; there is no fixed 14-second cap. Old recordings that
+ended early require a new rollout to include the missing hold motion.
 The added contact criterion is a conservative pilot operationalization of
 “held”; contact thresholds/hand geometry need validation before evaluation.
 
-Pilot prohibited pairs are robot–table (including legs), block–floor,
+Both hands, palms, and fingers may touch the tabletop or table legs. Their
+contact physics remains active. Pilot prohibited pairs are non-hand robot–table,
+block–floor,
 non-right-hand robot–block and non-foot robot–floor. Existing shared fall,
 joint-velocity and reference-limit checks still apply. Robot self-clearance and
 pre-execution geometric clearance prediction remain unimplemented. The pilot
@@ -141,13 +158,18 @@ For clarity, the prohibited-contact labels mean:
 
 | Label | Contact that stops the trial |
 | --- | --- |
-| robot-table | Any robot body, including hands, touching the table |
+| non-hand robot-table | Any robot body except either hand touching the tabletop or table legs |
 | non-right-hand robot-block | Any robot body except the right hand touching the block |
 | non-foot robot-floor | Any robot body except the feet touching the floor |
 | block-floor | The block touching the floor |
 
-These pilot rules are shared across methods. Wording changes do not relax
-collision checks; table contacts are not reclassified to manufacture success.
+These pilot rules are shared across methods. The hand allowance includes
+`left_hand_*` and `right_hand_*` bodies plus the two wrist-yaw bodies carrying
+the pinned G1's palm meshes. Wrist-pitch, wrist-roll, forearm, torso, and leg
+contacts with the table remain prohibited. `hand_table_contact_steps` counts
+200 Hz samples with an allowed contact; these contacts cannot satisfy the
+opposing finger-block contact requirement. Historical results retain their
+original contact policy and must not be pooled with the revised pilot rules.
 Detailed first-contact body names and penetration are stored in report.json.
 
 The recorded state includes a compiled scene and full 50 Hz integration state.
@@ -212,7 +234,7 @@ The proposal's primary robustness conditions are nominal, grasp-target bias and
 action latency. Choose recoverable perturbation magnitudes on validation data,
 then freeze them before held-out paired tests. An offline generation pause is
 not an action-latency perturbation; a real delayed-command buffer would be needed.
-Risk should anticipate arm/table collision or grasp degradation from execution
+Risk should anticipate prohibited arm/table contact or grasp degradation from execution
 history and upcoming references; Residual should make small bounded arm offsets
 and return to zero at low risk. This offers a testable source of improvement
 without intentionally damaging nominal execution. Stable nominal identity

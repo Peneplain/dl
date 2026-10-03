@@ -121,7 +121,13 @@ precision, with flat attempt folders and human-readable per-trial reports.
 Rendering is a separate user-selected step after collection. Phase-focused
 text is a pilot choice to compare against the previous full-task prompts with
 matched seeds and scenes; it does not establish higher physical success.
-The approach extension starts the root an additional 0.45 m behind a target
+By default, the tabletop task initializes the free root at the grounded table
+target, then checks stability during a two-second stand before the five hand
+phases. Walking is enabled only by an explicit \texttt{--walk} flag;
+\texttt{--direct-start} remains a compatibility alias for the default start.
+Manipulation-only and walk-and-grasp results are reported separately.
+With \texttt{--walk}, the approach extension starts the root an additional
+0.45 m behind a target
 0.22 m before the front table edge, with configurable pilot distances. Actual
 MuJoCo table/block/root state grounds the path without camera perception.
 ARDY receives timed root waypoints with free feet for walking. Since the pinned
@@ -146,6 +152,14 @@ wrist-frame acquisition region, then a checked measured-pose reference is held
 through frozen SONIC while fingers close. Missing alignment or missing sustained
 opposing contact stops the trial. These shared state-based nominal transitions
 are not learned residuals, teacher corrections, or extra user instructions.
+Both hands, including fingers and palms on the wrist-yaw bodies, may contact
+the tabletop and table legs through normal contact physics. Other robot-table
+contacts, non-right-hand robot-block contacts, non-foot robot-floor contacts,
+and block-floor contacts remain prohibited. This revised pilot contact policy
+is shared across methods; historical trials retain their original policy.
+The success threshold remains a two-second hold, but collection continues
+through the complete configured three-second hold phase, subject to failure
+stops and the 30-second timeout. Later failures invalidate earlier success.
 Two hand-only diagnostic trials have passed physical lift/contact/hold checks;
 complete walk-to-grasp success is not yet established. Those partial successes
 must not enter the complete-task success denominator or a verified expert set.
@@ -466,6 +480,7 @@ paraphrases and scene seeds are separated from training where applicable.
 The instructed block's lowest point must clear the tabletop by 5\,cm and remain
 held for 2\,s within 30\,s of simulated time, without a fall or prohibited
 collision. Fall/clearance thresholds will be fixed in the evaluation config.
+Hand-table contact is permitted under the shared pilot contact policy above.
 We plan \textbf{20 paired episodes per core condition per configuration}.
 Match instructions, initial states, perturbations, and ARDY random seeds;
 closed-loop nominal motions may subsequently diverge. B1, I2, and P target

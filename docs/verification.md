@@ -369,3 +369,134 @@ an inappropriate exact comparison across float64-to-float32 conversion; the
 corrected tolerance check passed. English-content and diff-whitespace checks
 passed. The asset/backend and actual frozen-model evidence remains distinct
 from these synthetic checks.
+
+## Direct-start manipulation calibration — 2026-10-03
+
+A direct grasp calibration uses `--direct-start` to place the free base at the
+grounded approach target in the scene's initial condition and checks position,
+heading, speed, and double-foot support throughout a two-second stand. It must
+remain ready for at least .4 continuous seconds before manipulation starts, then
+omits approach, settle, and preparation. SONIC still executes all subsequent
+motion; the robot root remains free. This calibration does not measure walking
+or establish complete B0 success. The block remains dynamic and camera images
+remain outside inference.
+
+Evidence is in `output/batch-261003-083431/` (standoff .22 m),
+`output/batch-261003-083920/` and `output/batch-261003-084351/` (standoff .20 m).
+All four closer-standoff trials used block XY=(.40,-.22), frozen ARDY and SONIC,
+and seeds 42–45. Their combined result was **2/4** (Wilson 95% interval
+[15.0%, 85.0%]):
+
+| Seed | Result | Evidence |
+| --- | --- | --- |
+| 42 | Success; 10.2 cm maximum block clearance, 2.01 s continuous hold | [Video](../output/batch-261003-083920/attempt-00001/vision/video.mp4) |
+| 43 | Stopped during close after right middle finger contacted the table; 1.1 mm penetration | [Video](../output/batch-261003-083920/attempt-00002/vision/video.mp4) |
+| 44 | Stopped during close after right middle finger contacted the table; 1.3 mm penetration | [Video](../output/batch-261003-084351/attempt-00001/vision/video.mp4) |
+| 45 | Success; 11.7 cm maximum block clearance, 2.01 s continuous hold | [Video](../output/batch-261003-084351/attempt-00002/vision/video.mp4) |
+
+Both successes maintained opposing finger contact throughout the required hold;
+no slipping was observed. Finger gains and targets were unchanged. The failures
+share one prohibited contact, so collision rules were not relaxed. At .22 m,
+the seed-42/43 pair failed before acquisition: the block was 4.8–6.1 cm below
+the wrist frame, outside the existing 4 cm lower acquisition bound, with no
+thumb opposition. Reducing standoff to .20 m allowed all four later trials to
+reach acquisition, but did not eliminate close-phase finger/table collisions.
+No grip-force increase was evaluated because neither successful trial slipped.
+Matched seed-43/44 variants tested distal index/middle targets held at their
+1.3-rad preshape, then wrist roll of +90 degrees and -90 degrees during reach
+and lower. The distal-curl variant retained the same middle-finger/table
+collision (`batch-261003-085937`). The +90-degree roll moved the block outside
+the positive wrist-lateral acquisition region (`batch-261003-090500`); the
+-90-degree roll entered the region but did not establish sustained opposing
+contact (`batch-261003-090919`). None was adopted. The selected .20 m setup
+retains the original closure targets and upright wrist orientation.
+
+The shared validator, target clipping, torque clipping, and velocity gate apply
+to all 29 body joints; no per-joint exception was introduced. A test checks
+reference clipping across all 29 joints. `./run.sh tests` passed with **61 tests**
+after restoring the selected controller settings. MUSA loaded the pinned full
+models for all twelve direct-start attempts, including the unsuccessful
+variants. Rendering for seeds 42 and 43 completed at 640x480 and 10 FPS, with
+receipt `batch-261003-083920/render-261003-091951-990222.json`. Seeds 44 and 45
+were rendered at 640x480 and 25 FPS; their receipt is
+`batch-261003-084351/render-261003-084814-808165.json`. The six
+selected-configuration attempts are exploratory calibration evidence only, not
+the planned paired evaluation; the two successes cannot be counted as full B0
+trials.
+
+## Allowed hand contact, optional walking and complete hold recording — 2026-10-03
+
+The agreed pilot contact policy now permits both hands, fingers, and palms to
+contact the tabletop and table legs. The pinned G1 attaches its palm meshes to
+the wrist-yaw bodies, which are included in this allowance. Contact physics
+remains active; forearm, torso, leg, block-floor, non-foot robot-floor, and
+non-right-hand robot-block contact stops remain. Allowed hand-table contact is
+counted per 200 Hz physics sample and cannot replace finger-block opposition
+in the success criterion. Historical results above retain their original rules.
+
+`--grasp` now starts the free robot at the grounded table target by default,
+checks continuous stability during the two-second stand, then runs the five
+hand phases. `--walk` adds the existing approach, settle, and preparation path;
+`--direct-start` remains a compatibility alias for the default start. Scene
+settings list the actual phases and declare the hand-table contact allowance.
+Legacy plan parsing preserves whether walking was originally selected; changed
+source hashes still prevent cross-version resume.
+
+The earlier seed-42 recording in `batch-261003-083920` ended at 14.20 s,
+with only .02 s in its configured hold phase. Seed 45 in
+`batch-261003-084351` ended at 13.98 s while still in lift. Both stopped when
+the two-second success threshold was reached. The executor now completes lift
+and the configured three-second hold before ending a successful trial, while
+continuing shared failure checks and respecting the 30-second timeout. A later
+fall or prohibited contact invalidates an earlier success. Rendering cannot
+restore motion absent from the old saved states.
+
+Validation artifacts are in `output/review-contact-hold-261003-CvjmWg/`.
+`tests-final.log` records **65 passing tests**, including actual MuJoCo contact
+fixtures for both hands/palms, prohibited non-hand table contacts, default and
+optional walking selection, full hold scheduling after early success, later
+failure invalidation, and RGB/MP4 fixture rendering. Scheduler fixtures do not
+establish model compatibility or physical task success. Bash syntax,
+documentation consistency, English-content, and diff-whitespace checks passed.
+The launch source snapshot matches every source hash in the collection plan.
+
+The actual frozen ARDY/text stack ran on MUSA, with frozen SONIC on ONNX Runtime
+CPU, in a fresh two-episode manipulation pilot:
+
+```bash
+./run.sh batch --grasp --batch 2 --seed 42 --cube-xy .40 -.22 --table-standoff .20 --output-root output/review-contact-hold-261003-CvjmWg
+./run.sh render --run output/review-contact-hold-261003-CvjmWg/batch-261003-121121 --all
+```
+
+Both episodes used the same .20 m calibration standoff as the earlier
+seed-42/43 pair, without walking, teacher intervention, or user corrections.
+The block and root remained free; fingers and frictional contacts performed
+the lift. This is **2/2** exploratory manipulation success (Wilson 95% interval
+[34.2%, 100.0%]), not the planned held-out evaluation or a walking result.
+
+| Seed | Trial length | Continuous successful hold | Configured final hold | Allowed hand-table samples | Maximum block clearance |
+| --- | --- | --- | --- | --- | --- |
+| 42 | 17.18 s | 4.41 s | 14.18–17.18 s | 0 | .1021 m |
+| 43 | 17.76 s | 5.31 s | 14.76–17.76 s | 471 | .1538 m |
+
+Seed 43 now completes rather than stopping on the historical finger/table
+contact. Each final hold contains 600 physics samples, covering its full
+three-second duration. Reports preserve dependency versions, commands, seeds,
+model/scene hashes, reference artifacts, task trajectories, and full saved
+states. Dependencies were torch/torch_musa 2.9.1, MuJoCo 3.2.7, NumPy 1.26.4,
+SciPy 1.15.3, ONNX Runtime 1.23.2, and Transformers 5.8.1.
+
+Both 640x480, 25 FPS H.264 videos decoded successfully: **430 frames / 17.20 s**
+for [seed 42](../output/review-contact-hold-261003-CvjmWg/batch-261003-121121/attempt-00001/vision/video.mp4),
+and **445 frames / 17.80 s** for
+[seed 43](../output/review-contact-hold-261003-CvjmWg/batch-261003-121121/attempt-00002/vision/video.mp4).
+`hold-validation.json` verifies full three-second hold intervals, terminal saved
+states, decoded frame counts, simulation-time video mappings, launch source
+hashes, and free robot/block joints. The last selected video state is within
+one 25 Hz frame of the final saved state. Hold onset, midpoint, and final decoded
+frames were visually inspected in
+[hold-review.png](../output/review-contact-hold-261003-CvjmWg/hold-review.png).
+The block remains above the tabletop in all selected hold frames. Rendering
+restored saved states without stepping physics; its wall time is recorded
+separately from simulation time and model latency. The renderer receipt is
+`batch-261003-121121/render-261003-121504-843333.json`.
