@@ -11,6 +11,7 @@ import numpy as np
 from baseline.adapters.joints import ISAACLAB_JOINT_NAMES
 from baseline.adapters.reference import BufferUnderrun, ReferenceBuffer, ReferenceSequence
 from baseline.common import sha256
+from baseline.reference_checks import ReferenceChecks
 from baseline.sonic_policy import SonicPolicy
 from baseline.rollout import RolloutRecorder
 
@@ -21,7 +22,11 @@ class SimulationStop(RuntimeError):
 
 class SonicSimulation:
     def __init__(self, assets, repo, output, threads=2, policy=None,
-                 gui=False, scene=None, initial_body_reference=None):
+                 gui=False, scene=None, initial_body_reference=None, finger_kp=6., finger_kd=.4,
+                 correction_provider=None):
+        if not np.isfinite([finger_kp, finger_kd]).all() or finger_kp <= 0 or finger_kd < 0:
+            raise ValueError("Finger gains must be finite, with positive stiffness and nonnegative damping")
+        self.finger_kp, self.finger_kd = float(finger_kp), float(finger_kd)
         self.policy = policy if policy is not None else SonicPolicy(assets, repo, threads)
         self.scene = Path(scene) if scene is not None else repo / "gear_sonic/data/robot_model/model_data/g1/scene_43dof.xml"
         self.model = mujoco.MjModel.from_xml_path(str(self.scene))
@@ -31,6 +36,9 @@ class SonicSimulation:
         self.events = None
         self.trajectory_file = None
         self.trajectory = None
+        self.context_file = None
+        self.context = None
+        self.task_phase = "stand"
         self.recording = None
         self.viewer = None
         root = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "floating_base_joint")
@@ -42,6 +50,8 @@ class SonicSimulation:
         self.q_indices = self.model.jnt_qposadr[joints]
         self.v_indices = self.model.jnt_dofadr[joints]
         self.ranges = self.model.jnt_range[joints].copy()
+        self.correction_provider = correction_provider
+        self.reference_checks = ReferenceChecks(self.ranges) if correction_provider is not None else None
         self.initial_body_reference = np.array(
             self.policy.parameters.default if initial_body_reference is None else initial_body_reference,
             dtype=float, copy=True)
@@ -113,6 +123,25 @@ class SonicSimulation:
                                  [f"q:{n}" for n in ISAACLAB_JOINT_NAMES] +
                                  [f"ref:{n}" for n in ISAACLAB_JOINT_NAMES] +
                                  [f"torque:{n}" for n in ISAACLAB_JOINT_NAMES])
+        self.context_file = (self.output / "nominal_context.csv").open("x", buffering=1)
+        self.context = csv.writer(self.context_file)
+        context_header = ["sim_time", "wall_time", "frame_index", "phase",
+                          "root_x", "root_y", "root_z", "root_qw", "root_qx",
+                          "root_qy", "root_qz", "root_vx", "root_vy", "root_vz",
+                          "root_wx", "root_wy", "root_wz"]
+        context_header += [f"state_q:{name}" for name in ISAACLAB_JOINT_NAMES]
+        context_header += [f"state_dq:{name}" for name in ISAACLAB_JOINT_NAMES]
+        context_header += [f"finger_ref:{name}" for name in self.finger_names]
+        context_header += [f"nominal_time_offset:{i:02d}" for i in range(self.policy.future_count)]
+        context_header += [f"nominal_pos:{i:02d}:{name}"
+                           for i in range(self.policy.future_count)
+                           for name in ISAACLAB_JOINT_NAMES]
+        context_header += [f"nominal_vel:{i:02d}:{name}"
+                           for i in range(self.policy.future_count)
+                           for name in ISAACLAB_JOINT_NAMES]
+        context_header += [f"nominal_quat:{i:02d}:{axis}" for i in range(self.policy.future_count)
+                           for axis in ("w", "x", "y", "z")]
+        self.context.writerow(context_header)
         self.started = time.perf_counter()
         self.latencies = []
         self.tracking_errors = []
@@ -135,6 +164,10 @@ class SonicSimulation:
             self.trajectory_file.close()
             self.trajectory_file = None
             self.trajectory = None
+        if self.context_file is not None:
+            self.context_file.close()
+            self.context_file = None
+            self.context = None
         self.output = None
 
     def sync_viewer(self):
@@ -162,12 +195,16 @@ class SonicSimulation:
         if bottoms: self.data.qpos[self.root_q + 2] += .003 - min(bottoms)
         mujoco.mj_forward(self.model, self.data)
         self.policy.reset()
+        if self.reference_checks is not None:
+            self.reference_checks.reset()
+            self.correction_provider.reset()
         self.buffer = ReferenceBuffer(max_gap=.021)
         self.current_ref = self.initial_body_reference.copy()
         self.current_quat = self.data.qpos[self.root_q + 3:self.root_q + 7].copy()
         self.end_time = 0.0
         self.holding = True
         self.terminal_hold_logged = False
+        self.task_phase = "stand"
         self.pose_history = deque(maxlen=200)
         self.reset_count += 1
         self.event("reset", reset_index=self.reset_count)
@@ -239,10 +276,12 @@ class SonicSimulation:
         self.holding = False
         self.terminal_hold_logged = False
         self.policy.align(self.data.qpos[self.root_q + 3:self.root_q + 7], sequence.body_quat[0])
+        if getattr(self, "correction_provider", None) is not None:
+            self.correction_provider.invalidate_plan()
         self.event("reference_installed", frames=len(sequence.times), end_time=self.end_time,
                    transition_seconds=n * .02)
 
-    def hold_measured_pose(self, reason):
+    def hold_measured_pose(self, reason, transition=.3):
         """End a task segment with a checked pose hold through frozen SONIC.
 
         Only the reference buffer changes. Physics, free joints, and policy
@@ -251,8 +290,9 @@ class SonicSimulation:
         pose = self.body_pose()
         reference = ReferenceSequence([0., .02], np.repeat(pose[None, 7:], 2, axis=0),
                                       np.repeat(pose[None, 3:7], 2, axis=0))
-        self.install(reference, transition=.1)
-        self.event("measured_pose_hold", reason=reason, body_qpos=pose.tolist())
+        self.install(reference, transition=transition)
+        self.event("measured_pose_hold", reason=reason, body_qpos=pose.tolist(),
+                   transition_seconds=float(transition))
 
     def lookahead(self):
         count = self.policy.future_count
@@ -268,19 +308,53 @@ class SonicSimulation:
                 self.buffer.underruns += 1
                 self.holding = True
                 self.event("buffer_underrun", behavior="hold_terminal_nominal_pose")
-            return (np.repeat(self.current_ref[None], count, axis=0), np.zeros((count, 29)),
-                    np.repeat(self.current_quat[None], count, axis=0))
-        # Future samples outside a completed finite clip explicitly hold its endpoint.
-        if times[-1] > self.end_time + 1e-8 and not self.terminal_hold_logged:
-            self.event("reference_terminal_hold", buffered_end=self.end_time,
-                       requested_end=float(times[-1]), behavior="hold_terminal_nominal_pose")
-            self.terminal_hold_logged = True
-        sampled = sequence.sample_with_terminal_hold(times)
-        p, q = sampled.joint_pos, sampled.body_quat
-        v = sampled.velocities()
-        v[times >= self.end_time - 1e-8] = 0
+            p = np.repeat(self.current_ref[None], count, axis=0)
+            q = np.repeat(self.current_quat[None], count, axis=0)
+            v = np.zeros((count, 29))
+        else:
+            # Future samples outside a completed finite clip hold its endpoint.
+            if times[-1] > self.end_time + 1e-8 and not self.terminal_hold_logged:
+                self.event("reference_terminal_hold", buffered_end=self.end_time,
+                           requested_end=float(times[-1]), behavior="hold_terminal_nominal_pose")
+                self.terminal_hold_logged = True
+            sampled = sequence.sample_with_terminal_hold(times)
+            p, q = sampled.joint_pos, sampled.body_quat
+            v = sampled.velocities()
+            v[times >= self.end_time - 1e-8] = 0
         self.current_ref, self.current_quat = p[0].copy(), q[0].copy()
-        return p, v, q
+        self._nominal_lookahead = (p, v, q)
+        if getattr(self, "correction_provider", None) is None:
+            return p, v, q
+        dense_count = (count - 1) * self.policy.future_step + 1
+        dense_times = self.data.time + np.arange(dense_count) * .02
+        if sequence is None or self.data.time > self.end_time + 1e-8:
+            dense = ReferenceSequence(dense_times, np.repeat(p[:1], dense_count, axis=0),
+                                      np.repeat(q[:1], dense_count, axis=0))
+        else:
+            dense = sequence.sample_with_terminal_hold(dense_times)
+        desired = self.correction_provider.request(self, dense)
+        checked = self.reference_checks.apply(dense, desired)
+        slots = np.arange(count) * self.policy.future_step
+        return checked.joint_pos[slots], checked.velocities()[slots], checked.body_quat[slots]
+
+    def _write_nominal_context(self, positions, velocities, quaternions):
+        """Persist the causal P input tuple at the SONIC control clock.
+
+        Object/contact labels stay in ``task.csv`` so the baseline remains
+        model-independent; both files share ``sim_time`` and ``frame_index``.
+        Future executed states are never written as nominal inputs.
+        """
+        if self.context is None:
+            return
+        root = self.data.qpos[self.root_q:self.root_q + 7]
+        root_velocity = self.data.qvel[self.root_v:self.root_v + 6]
+        offsets = np.arange(self.policy.future_count, dtype=float) * self.policy.future_step * .02
+        row = [self.data.time, time.perf_counter() - self.started, self.frame_index,
+               self.task_phase, *root, *root_velocity,
+               *self.data.qpos[self.q_indices], *self.data.qvel[self.v_indices],
+               *self.finger_target, *offsets, *positions.reshape(-1),
+               *velocities.reshape(-1), *quaternions.reshape(-1)]
+        self.context.writerow(row)
 
     def command_fingers(self, targets, max_rate=2.5):
         """Named hand commands under a shared radians/second rate limit."""
@@ -309,6 +383,7 @@ class SonicSimulation:
                             self.data.qvel[self.v_indices].copy(), quat,
                             self.data.qvel[self.root_v + 3:self.root_v + 6].copy())
         p, v, q = self.lookahead()
+        self._write_nominal_context(*getattr(self, "_nominal_lookahead", (p, v, q)))
         inference = time.perf_counter()
         target, action = self.policy.act(p, v, q, quat)
         self.latencies.append((time.perf_counter() - inference) * 1000)
@@ -320,7 +395,8 @@ class SonicSimulation:
             torque = params.kp * (target - self.data.qpos[self.q_indices]) - params.kd * self.data.qvel[self.v_indices]
             self.data.ctrl[self.actuators] = np.clip(torque,
                 self.model.actuator_ctrlrange[self.actuators, 0], self.model.actuator_ctrlrange[self.actuators, 1])
-            finger_torque = 4 * (self.finger_target - self.data.qpos[self.finger_q]) - .2 * self.data.qvel[self.finger_v]
+            finger_torque = (self.finger_kp * (self.finger_target - self.data.qpos[self.finger_q])
+                             - self.finger_kd * self.data.qvel[self.finger_v])
             self.data.ctrl[self.finger_actuators] = np.clip(finger_torque,
                 self.model.actuator_ctrlrange[self.finger_actuators, 0],
                 self.model.actuator_ctrlrange[self.finger_actuators, 1])
@@ -348,6 +424,7 @@ class SonicSimulation:
         return {"physics_executed": self.frame_index > 0, "sonic_executed": self.frame_index > 0,
                 "task_success": None, "free_base": True, "elastic_support": False,
                 "control_hz": 50, "physics_hz": 200,
+                "finger_kp_nm_per_rad": self.finger_kp, "finger_kd_nm_s_per_rad": self.finger_kd,
                 "sonic_g1_lookahead_seconds": self.policy.lookahead_seconds,
                 "frames": self.frame_index, "simulation_seconds": float(self.data.time),
                 "wall_seconds": time.perf_counter() - self.started,
@@ -360,6 +437,7 @@ class SonicSimulation:
                 "sonic_source": self.policy.source_commit, "sonic_manifest_sha256": self.policy.asset_hash,
                 "scene_sha256": sha256(self.scene),
                 "rollout": self.recording.summary() if self.recording else None,
+                "nominal_context": "nominal_context.csv" if self.output is not None else None,
                 "video": None}
 
     def close(self):

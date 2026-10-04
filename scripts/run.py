@@ -84,6 +84,26 @@ def parser_for_run():
                         help="Compatibility alias for the default no-walk grasp start (grasp only)")
     parser.add_argument("--table-standoff", type=float, default=DEFAULT_TABLE_STANDOFF,
                         help="Target root distance from the front table edge, in metres (grasp only)")
+    parser.add_argument("--finger-kp", type=float, default=6., help="Finger torque stiffness (Nm/rad; default 6)")
+    parser.add_argument("--finger-kd", type=float, default=.4, help="Finger torque damping (Nm s/rad; default .4)")
+    parser.add_argument("--hand-approach", choices=["preshaped", "open"], default="open",
+                        help="Finger posture during reach/lower; close only after alignment (grasp only)")
+    parser.add_argument("--hold-seconds", type=float, default=5.,
+                        help="Final hold duration, within the 30-second trial budget (grasp only)")
+    parser.add_argument("--acquisition-z-min", type=float, default=None,
+                        help="Optional lower bound for the dynamic wrist-frame gate (metres; grasp only)")
+    parser.add_argument("--wrist-offset", type=float, nargs=3, default=None,
+                        help="Optional wrist-frame offset override; default uses the measured hand-center site")
+    parser.add_argument("--alignment-replans", type=int, default=2,
+                        help="Short measured-state lower-phase replans after a missed gate (grasp only)")
+    parser.add_argument("--alignment-replan-seconds", type=float, default=1.6,
+                        help="Duration of each lower-phase alignment replan (grasp only)")
+    parser.add_argument("--acquisition-transition", type=float, default=.3,
+                        help="Measured-pose acquisition hold transition in seconds (grasp only)")
+    parser.add_argument("--contact-profile", choices=["legacy", "elliptic"], default="elliptic",
+                        help="Shared grasp contact solver profile (grasp only)")
+    parser.add_argument("--lift-seconds", type=float, default=4.8,
+                        help="Generated lift duration, within the common timeout (grasp only)")
     parser.add_argument("--xy-range", nargs=4, type=float, default=[.36, .46, -.30, -.16])
     parser.add_argument("--phase-prompts", type=Path, help="JSON file overriding individual grasp phase prompts")
     parser.add_argument("--prompt-profile", choices=["focused", "legacy"], default="focused")
@@ -144,6 +164,31 @@ def parse_args(argv=None):
         parser.error("history-frames must be a positive multiple of four; threads positive")
     if not (.05 <= args.start_back <= .6 and .20 <= args.table_standoff <= .55):
         parser.error("start-back must be .05-.6 m; table-standoff must be .20-.55 m")
+    if (not np.isfinite([args.finger_kp, args.finger_kd, args.hold_seconds]).all()
+            or not (0 < args.finger_kp <= 20 and 0 <= args.finger_kd <= 2 and 3 <= args.hold_seconds <= 20)):
+        parser.error("finger-kp must be (0,20], finger-kd [0,2], hold-seconds [3,20]")
+    if not args.grasp and (args.hand_approach != "open" or args.hold_seconds != 5.):
+        parser.error("hand-approach and hold-seconds require --grasp")
+    if args.acquisition_z_min is not None and (not np.isfinite(args.acquisition_z_min)
+                                                or not -.20 <= args.acquisition_z_min <= 0):
+        parser.error("acquisition-z-min must be finite and between -.20 and 0 m")
+    if args.wrist_offset is not None and (not np.isfinite(args.wrist_offset).all()
+            or not (.05 <= args.wrist_offset[0] <= .30 and -.15 <= args.wrist_offset[1] <= .15
+                    and -.15 <= args.wrist_offset[2] <= .15)):
+        parser.error("wrist-offset must fit X=[.05,.30], Y=[-.15,.15], Z=[-.15,.15] m")
+    if args.alignment_replans < 0 or args.alignment_replans > 4:
+        parser.error("alignment-replans must be between 0 and 4")
+    if not np.isfinite(args.alignment_replan_seconds) or not .4 <= args.alignment_replan_seconds <= 3.0:
+        parser.error("alignment-replan-seconds must be between .4 and 3 seconds")
+    if not np.isfinite(args.acquisition_transition) or not .1 <= args.acquisition_transition <= .8:
+        parser.error("acquisition-transition must be between .1 and .8 seconds")
+    if not np.isfinite(args.lift_seconds) or not 3.2 <= args.lift_seconds <= 6.4:
+        parser.error("lift-seconds must be between 3.2 and 6.4 seconds")
+    if not args.grasp and (args.acquisition_z_min is not None or args.wrist_offset is not None
+                          or args.alignment_replans != 2 or args.alignment_replan_seconds != 1.6
+                          or args.acquisition_transition != .3 or args.contact_profile != "elliptic"
+                          or args.lift_seconds != 4.8):
+        parser.error("wrist, acquisition, contact and lift options require --grasp")
     xmin, xmax, ymin, ymax = args.xy_range
     if not (.34 <= xmin <= xmax <= .55 and -.38 <= ymin <= ymax <= -.08):
         parser.error("xy-range must fit X=[.34,.55], Y=[-.38,-.08]")

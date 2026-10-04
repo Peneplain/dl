@@ -500,3 +500,230 @@ The block remains above the tabletop in all selected hold frames. Rendering
 restored saved states without stepping physics; its wall time is recorded
 separately from simulation time and model latency. The renderer receipt is
 `batch-261003-121121/render-261003-121504-843333.json`.
+
+## Failure audit, contact drift and open-hand approach — 2026-10-03
+
+The available `output/batch-261003-122608` contains 20 physical episodes, seeds
+0–19, sampled block positions, .22 m standoff, historical finger gains 4/.2,
+distal-finger preshape and three-second final hold. Read-only analysis found:
+
+| Recorded outcome | Episodes | Diagnosis |
+| --- | --- | --- |
+| `grasp_alignment_missed` | 8 | Block center remains below the acquisition region |
+| `grasp_not_acquired` | 5 | Closing produces transient rather than sustained opposition |
+| `timeout` | 3 | Opposition acquired on the table is lost during lift; block does not clear 5 cm |
+| Recorded success | 4 | Seeds 2, 12, 16, 18 reach two seconds, but 12/16/18 later drop |
+
+The original labels and trajectories are preserved. Only seed 2 remains held at
+the original final frame: **1/20 retained**, versus **4/20 threshold events**.
+`audit/audit.json` stores original report/task hashes and per-phase forces and
+motion metrics. All new artifacts are in `output/grasp-review-261003-IR6tcT/`;
+the English [analysis report](../output/grasp-review-261003-IR6tcT/analysis.md)
+and [clearance/force plot](../output/grasp-review-261003-IR6tcT/recorded-drops.png)
+show the distinction.
+
+During lift the wrist and block oscillate together. During subsequent hold,
+wrist displacement is only about 7–11 mm, while the three dropped blocks move
+about 10–11 cm relative to the wrist. Opposing normal force is approximately
+19 N before release. A restored seed-16 hold snapshot has tangential loads of
+about .4 N at each opposing contact with sliding coefficient 1. This supports
+soft-contact drift as a material cause of slow slip, rather than inadequate
+normal force alone. MuJoCo's [official slip guidance](https://mujoco.readthedocs.io/en/stable/modeling.html#preventing-slip)
+recommends elliptic cones, larger impedance ratio and accurate Newton solves
+for this numerical issue. Simulator calibration is not evidence of real motor
+or material behavior.
+
+Diagnostics reran from reset through frozen SONIC, shared checks, articulated
+fingers and a dynamic block. In the initial four-seed ten-second hold control,
+all four historical threshold successes eventually dropped. Larger stiffness
+and damping alone did not prevent that. Uniformly curling all closure targets
+20% further also failed; those targets were not adopted. A deeper wrist goal
+and stricter acquisition threshold failed all eight later centered-target
+pilots; those goals were not adopted either. Gaussian arm-reference smoothing
+had mixed wrist vibration results. Slower saved-reference playback increased
+wrist vibration in the two tested clips, so neither filter nor replay retiming
+was adopted. `comparison.json` records the measured vibration metrics and the
+high-pass definition.
+
+An elliptic Newton solver with `impratio=10`, `tolerance=1e-10` and no NoSlip
+post-processing eliminated later drops for the acquired seed-16/18 grasps in
+the fixed-reference controls: continuous hold exceeded 12 s. Acquisition still
+failed for some references because altered ground/contact dynamics change
+tracking. Those controls are explicitly saved-reference diagnostics; they do
+not establish closed-loop ARDY task success. Their references are hashed and
+controller history/buffers are recreated by re-executing from episode reset.
+No visual replay state was treated as a complete controller branch checkpoint.
+
+A fresh paired calibration then used all original 20 prompts, block positions
+and seeds. ARDY generated every moving phase from current executed history;
+there were no saved-reference substitutions, teacher calls or user corrections.
+Both configurations used .20 m standoff, 6/.4 finger gains, elliptic contacts,
+unchanged closure targets/acquisition region, 4.8 s generated lift, and a
+complete ten-second final hold within the existing 30-second timeout. The only
+factor between them was the reach/lower finger posture:
+
+| Approach posture | Retained success | Wilson 95% interval | Successful seeds |
+| --- | --- | --- | --- |
+| Historical distal preshape | 2/20 (10%) | [2.8%, 30.1%] | 3, 7 |
+| Fully open until alignment | 6/20 (30%) | [14.5%, 51.9%] | 0, 4, 7, 10, 12, 19 |
+
+The paired difference is **+20 percentage points**, with an episode bootstrap
+95% percentile interval **[0, +40] percentage points** (20,000 resamples,
+seed 20261003). The interval includes zero. This exploratory calibration
+supports the selected default but does not establish a universal advantage or
+replace held-out evaluation. The six open-hand successes complete the entire
+ten-second hold. Its remaining failures are nine alignment failures, four
+timeouts and one later drop, all retained in the denominator.
+
+Nominal ARDY and physical SONIC errors both contribute to remaining alignment
+failures. In three stopped episodes, nominal wrist FK is roughly 4–6 cm above
+the requested goal and the executed wrist is another 2–4 cm above that nominal
+FK. The requested wrist height is about .715 m, while execution remains at
+.79–.80 m. Finger strength cannot fix this. These position checks used restored
+executed root pose and named reference body joints; they are diagnostics of the
+recorded state, not proof of universal workspace limits. Lift oscillation
+remains a limitation; the selected hand/contact changes do not claim to
+eliminate all frozen-model tracking vibration.
+
+The selected defaults use open fingers, stiffness 6 and damping .4 under the
+original motor and joint bounds, elliptic contacts, .20 m standoff, a 4.8 s lift
+and a five-second final hold. The shorter default hold allows the walking
+variant to fit the shared 30-second budget. New reports retain the original
+`success_threshold_reached` event but require `retained_at_end` for task success;
+`grasp_lost_after_success` exposes a later drop onto the table. All future
+methods must share these calibrated scene, controller and assessment settings.
+Finger limits, mass, sliding/torsional/rolling coefficients, timestep, free-base
+and dynamic-block behavior are unchanged. No attachment or extra support force
+was introduced. Protocol versions with different physics or retention rules
+must not be pooled without identifying the change.
+
+Commands and source snapshots are stored alongside the runs. For the paired
+calibration:
+
+```bash
+MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh python scripts/calibrate_grasp.py --source output/batch-261003-122608 --out output/grasp-review-261003-IR6tcT/paired20 --seeds 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 --variants strong open --standoff .20 --lift-seconds 4.8 --fresh-motion
+```
+
+`paired20-source/` matches the complete source hash set in each paired plan.
+The final default command, `./run.sh batch --grasp --batch 3 --seed 0
+--output-root output/grasp-review-261003-IR6tcT/default`, independently verified
+the new CLI defaults: seed 0 succeeded at 20.50 s with 8.53 s continuous hold;
+seeds 1 and 2 failed alignment. The command correctly returned status 1 for
+those physical failures. `default-source/` matches its launch plan. Both
+default and paired reports contain dependency versions, model/scene hashes,
+prompts, seeds, trajectories, fingers, forces, full states and simulation/wall
+time. `tests-final.log` records **67 passing tests**, including late-drop
+assessment, contact-solver configuration, CLI bounds and actual RGB/MP4 fixtures.
+`smoke/` passed synthetic 9-to-17-frame packet/reference conversion, which is
+not a model or physical grasp acceptance test. The diagnostic scripts remain
+outside the declared baseline upload archive.
+
+The retained seed-12 paired rollout was rendered with `./run.sh render --run
+output/grasp-review-261003-IR6tcT/paired20/open-seed-012 --distance 2.2`.
+The decoded H.264 video has 657 frames at 25 FPS (26.28 s), covers the last
+saved simulation state at 26.24 s, and includes the complete ten-second final
+hold. `improved-hold-review.png` visually confirms the block remains raised
+at hold start, five seconds into hold, and the last saved frame.
+`evidence-validation.json` verifies all 20 original report/task hashes remain
+unchanged, all 40 paired source hash sets match their snapshots, and the
+compiled scene preserves motor/joint limits, friction, body masses, timestep,
+and free root/block joints. Seed 12 has opposing contact throughout all 2,000
+final-hold physics samples and 13.515 s maximum continuous hold. The validator
+command and SHA-256, video hash, and frame/duration measurements are recorded
+in that receipt. These checks establish recording completeness and physical
+configuration consistency; they do not remove the remaining tracking errors.
+
+## Causal P context and Track4 video set - 2026-10-04
+
+The adaptive torso-constraint calibration was run with fresh motion generation
+and four held-out seeds:
+
+```bash
+MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh python scripts/calibrate_grasp.py \
+  --source output/batch-261003-122608 --out output/grasp-review-261004-torso \
+  --seeds 1 2 5 6 --variants open --standoff .20 --lift-seconds 4.8 \
+  --hold-seconds 5 --fresh-motion
+```
+
+All four trials reached the alignment/contact phases but timed out at 30 s;
+none reached the 5 cm clearance threshold, with maximum clearance about
+0.00175 m and zero retained hold samples. This is a physical failure result,
+not a successful grasp claim. The run is useful because the new torso limits
+remove the earlier waist-roll reference violations while exposing the remaining
+tracking/contact problem: joint tracking RMSE is 0.088--0.097 rad, close/lift
+contacts are intermittent, and all four trials have zero contact force in the
+terminal hold after the block settles back on the table.
+
+The read-only analyzer accepted all four `open-seed-*` directories directly
+under this calibration run. Each `nominal_context.csv` has 1,500 rows at 50 Hz,
+strictly increasing frame/time values, ten causal lookahead offsets from 0 to
+0.9 s, 290 position columns, 290 velocity columns and 40 quaternion columns.
+The context contains current execution history, phase and planned finger
+commands plus nominal future references; it does not contain future executed
+states or teacher outputs. These checks establish the data contract needed by
+the next Risk/Residual implementation, not model quality.
+
+Per-attempt scene compilation was also checked directly from the recorded XML:
+the elliptic scene has `cone=1`, `impratio=10` and `tolerance=1e-10`; the legacy
+scene has `cone=0`, `impratio=1` and `tolerance=1e-8`. The execution runtime now
+recompiles the exact per-episode scene before simulation, so random block
+positions and contact settings cannot be silently replaced by the preload
+model.
+
+The Track4 B0 video set is available in the ignored output artifacts:
+
+* Success, complete hold: `output/grasp-review-261003-IR6tcT/paired20/open-seed-012/vision/video.mp4` (657 frames, 25 FPS, 26.28 s).
+* Success, independent example: `output/grasp-review-261003-IR6tcT/paired20/open-seed-004/vision/video.mp4` (640 frames, 25 FPS, 25.60 s).
+* Failure with late loss: `output/grasp-review-261003-IR6tcT/paired20/open-seed-003/vision/video.mp4` (318 frames, 12.5 FPS, 25.44 s).
+* Fresh timeout after torso constraints: `output/grasp-review-261004-torso/open-seed-001/vision/video.mp4` (376 frames, 12.5 FPS, 30.08 s).
+
+The additional renders were produced with `./run.sh render --run <attempt>
+--distance 2.2`; the failure and fresh-timeout clips used `--fps 12.5` to keep
+software rendering practical. Rendering restores recorded states and does not
+step physics or alter the reports.
+
+The first three are B0 examples; the fresh timeout is the current diagnostic
+failure. P videos are deliberately not labeled as available because the P
+networks and training/evaluation entry point are not implemented yet. The exact
+implementation gate, causal inputs, branch restoration rules, arm-only output
+mask, bounded residual and shared evaluator are specified in
+`docs/track4_requirements.md` and `docs/p_interface.md`. Once P exists, its
+success and failure videos must use the same scene, SONIC, evaluator and
+recording path as B0.
+
+After these changes, `./run.sh tests` completed with 67 passing tests and
+`./run.sh smoke --out output/grasp-review-261004-smoke-final` passed the
+synthetic reference/packet check. Neither check establishes full ARDY/SONIC
+compatibility or physical grasp success on the supported MUSA stack.
+The required `./run.sh check` also passed the MUSA device, pinned ARDY/SONIC
+source revisions, all local manifests, and the linear/layer-norm/attention
+backend primitives. `./run.sh sonic --out output/grasp-review-261004-sonic-check
+--repeats 5` passed the frozen SONIC encoder and decoder ONNX operator probe on
+CPU; its synthetic inputs and disconnected graphs are not a control-loop or
+physics result.
+
+## Risk/Residual source merge and synthetic checks — 2026-10-05
+
+The local `risk_residual/` learning source was integrated into the canonical
+server tree without replacing the newer B0 grasp, execution, scene and context
+logging changes. Its phase encoding was updated for the server's nine-phase
+task vocabulary; the versioned history schema is now 119 fields. An optional
+correction provider and shared arm-only reference checks were added. B0 does
+not import the learning package. `docs/learning.md` lists the missing collector,
+verified teacher, observation builder and P trial entry point.
+
+On the S4000 host, `./run.sh tests` passed **78 tests**; the log is
+`output/merge-261005-tests.log`. `./run.sh check` passed pinned assets and MUSA
+operator checks (`output/merge-261005-check.log`). The baseline synthetic
+reference smoke passed (`output/merge-261005-reference-smoke/report.json`).
+The reduced-width synthetic Risk then Residual training check passed on MUSA
+(`output/merge-261005-p-musa/report.json`). Its fixture contains no measured
+grasp data or physics. These checks establish a working learning software
+pipeline and optional correction interface; they do not establish task success,
+teacher validity or full P control-loop behavior.
+
+An actual unprompted B0 standing episode also completed after the merge:
+`output/batch-261005-042037/attempt-00001/report.json` records frozen model
+loading, 100 SONIC control frames, 2.00 s of MuJoCo physics, and no task
+success value because no grasp task was requested. The separate scene helper
+completed against the pinned SONIC assets (`output/merge-261005-scene.log`).

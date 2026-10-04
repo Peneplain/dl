@@ -195,21 +195,42 @@ class ArdyService:
             skeleton, torch.as_tensor(indices + history_count), joint_pos, joint_rot, None,
             joint_names=["RightHand", "LeftHand", "LeftFoot", "RightFoot", "Hips"])
         constraint_sets = [constraint]
-        if "torso_pitch_rad" in constraints:
-            pitches = np.asarray(constraints["torso_pitch_rad"], dtype=np.float32)
-            if pitches.shape != (len(indices),) or not np.isfinite(pitches).all() or (np.abs(pitches) > .52).any():
-                raise ValueError("Invalid torso pitch goals: expected one bounded radian value per frame")
-            # FK through the exact joint-name converter preserves static skeleton
-            # frame offsets. Pad only for motion_rep's multiple-of-four contract.
-            poses = np.repeat(standing[None], ((len(indices) + 3) // 4) * 4, axis=0)
-            poses[:, 7 + ISAACLAB_JOINT_NAMES.index("waist_pitch_joint")] = np.pad(
-                pitches, (0, len(poses) - len(pitches)), mode="edge")
+        # Keep all three measured waist joints stable while the hand moves. The
+        # wrist condition alone leaves ARDY free to invent torso roll/yaw, which
+        # can produce an unsafe reference after a valid grasp alignment. A
+        # preparation phase may override pitch, while yaw and roll remain at the
+        # measured values. FK through the exact joint-name converter preserves
+        # the skeleton's static frame offsets.
+        torso_specs = (
+            ("torso_yaw_rad", "waist_yaw_joint", "waist_yaw_skel"),
+            ("torso_roll_rad", "waist_roll_joint", "waist_roll_skel"),
+            ("torso_pitch_rad", "waist_pitch_joint", "waist_pitch_skel"),
+        )
+        torso_values = {}
+        for key, joint, _ in torso_specs:
+            if key not in constraints:
+                continue
+            values = np.asarray(constraints[key], dtype=np.float32)
+            bound = .52 if key == "torso_pitch_rad" else np.pi
+            if (values.shape != (len(indices),) or not np.isfinite(values).all()
+                    or (np.abs(values) > bound).any()):
+                raise ValueError(f"Invalid {key}: expected one bounded radian value per frame")
+            torso_values[key] = (joint, values)
+        if torso_values:
+            padded = ((len(indices) + 3) // 4) * 4
+            poses = np.repeat(standing[None], padded, axis=0)
+            for key, (joint, values) in torso_values.items():
+                poses[:, 7 + ISAACLAB_JOINT_NAMES.index(joint)] = np.pad(
+                    values, (0, padded - len(values)), mode="edge")
             with torch.no_grad():
                 posture = self.model.motion_rep.inverse(self.history_features(poses), is_normalized=True)
-            torso = skeleton.bone_index["waist_pitch_skel"]
-            constraint_sets.append(_TorsoRotationConstraint(
-                torch.as_tensor(indices + history_count), torso,
-                posture["global_rot_mats"][0, :len(indices), torso], torch))
+            frame_tensor = torch.as_tensor(indices + history_count)
+            for key in torso_values:
+                skeleton_name = next(skel for name, _, skel in torso_specs if name == key)
+                torso = skeleton.bone_index[skeleton_name]
+                constraint_sets.append(_TorsoRotationConstraint(
+                    frame_tensor, torso,
+                    posture["global_rot_mats"][0, :len(indices), torso], torch))
         observed, mask = self.model.motion_rep.create_conditions_from_constraints(
             constraint_sets, length=frames + history_count, to_normalize=True, device=self.device)
         return observed[None], mask[None]

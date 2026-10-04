@@ -42,12 +42,12 @@ Repeating the same arguments reproduces the sampling plan; folder timestamps
 do not change seeds. Default XY bounds are X=[.36,.46], Y=[-.30,-.16] metres.
 Use `--cube-xy X Y` for a fixed position or
 `--xy-range XMIN XMAX YMIN YMAX` to change the range. See [task details](grasp.md)
-for supported bounds. The default scene places the robot at a target 0.22 m from
+for supported bounds. The default scene places the robot at a target 0.20 m from
 the front table edge. With `--walk`, `--start-back` (.05-.6 m) adds the initial
 separation before walking to that target; `--table-standoff` (.20-.55 m)
 configures the target distance. These values measure root position, not fingertip
 clearance. The default root is the grounded approach target; the walking default
-starts at X=-.36 m and approaches X=.09 m for the current table. Both hands
+starts at X=-.34 m and approaches X=.11 m for the current table. Both hands
 may touch the table; forearm, torso, and leg contacts still stop the trial.
 These are pilot settings.
 
@@ -65,6 +65,48 @@ identifies excessive position drift during preparation. Failure
 reasons `approach_target_missed`, `approach_not_settled`, and `approach_too_close`
 identify walking failures; they count as failed trials. The selected path must
 still finish within the same 30-second simulation budget.
+
+Hand/contact calibration options are recorded in the plan and scene settings:
+
+```bash
+# Open the fingers during reach/lower; close only once measured alignment passes
+./run.sh batch --grasp --hand-approach open
+# Increase observation time without extending the 30-second trial timeout
+./run.sh batch --grasp --hold-seconds 10 --lift-seconds 4.8
+# Current stronger, damped hand controller (original motor limits remain active)
+./run.sh batch --grasp --finger-kp 6 --finger-kd .4
+# Historical hand/contact settings for an explicit calibration control
+./run.sh batch --grasp --finger-kp 4 --finger-kd .2 --contact-profile legacy --table-standoff .22 --hand-approach preshaped --lift-seconds 3.2 --hold-seconds 3
+```
+
+`--wrist-offset X Y Z` overrides the nominal wrist-frame offset used to condition
+ARDY. By default it is derived from the measured `task_grasp_center` site in the
+MuJoCo scene. The physical acquisition gate is derived at runtime from that
+same site and the current block dimensions; `--acquisition-z-min` optionally
+tightens its lower wrist-frame bound. A missed lower gate can trigger up to two
+short measured-state replans by default; tune them with
+`--alignment-replans` and `--alignment-replan-seconds`. The measured-pose
+acquisition hold uses a .3-second transition by default; configure it with
+`--acquisition-transition` when auditing wrist settling. These controls use
+current simulator state and remain valid for seeded random block positions.
+A historical success followed by a drop is no longer treated as retained success
+in new reports. `success_threshold_reached`, `retained_at_end`, and
+`post_success_loss_samples` expose those stages without rewriting old evidence.
+
+Repository diagnostic tools are separate from the baseline upload archive:
+
+```bash
+MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh python scripts/analyze_grasp.py --run output/SESSION --out output/FRESH-AUDIT
+MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh python scripts/calibrate_grasp.py --source output/SESSION --out output/FRESH-CALIBRATION --seeds 2 12 16 18 --variants strong open --fresh-motion
+```
+
+The calibration tool reruns from reset under frozen SONIC. Without
+`--fresh-motion`, it reuses available nominal ARDY references and is a controller
+diagnostic; with that flag, ARDY generates every moving phase from current
+executed history. All calibration results remain exploratory.
+Defaults use fully open fingers, a 4.8-second generated lift, and a five-second
+final hold. The acquisition threshold and closure targets retain their previous
+values; finger and contact gains are independent of the hand-approach option.
 
 The terminal prints `[SUCCESS]`, `[FAILED]`, or `[COMPLETED]` for each attempt
 and lists all results at the end. Open **`summary.txt` or `summary.md`** in the
@@ -218,6 +260,7 @@ output/batch-TIME/                 # Or manual-TIME
     request.json / report.json     # Request, outcome, clocks, hashes, and errors
     scene.xml / settings.json      # Grasp scene and task parameters
     events.jsonl / trajectory.csv  # Events, states, references, and torques
+    nominal_context.csv           # Causal SONIC/Risk input context at 50 Hz
     task.csv                      # 200 Hz grasp contact, height, and wrist log
     ardy/PHASE/                   # Text, measured history, constraints, references
     grounding/PHASE.json           # Current table, block, root, and approach target

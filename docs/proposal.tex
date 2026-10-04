@@ -128,7 +128,7 @@ phases. Walking is enabled only by an explicit \texttt{--walk} flag;
 Manipulation-only and walk-and-grasp results are reported separately.
 With \texttt{--walk}, the approach extension starts the root an additional
 0.45 m behind a target
-0.22 m before the front table edge, with configurable pilot distances. Actual
+0.20 m before the front table edge, with configurable pilot distances. Actual
 MuJoCo table/block/root state grounds the path without camera perception.
 ARDY receives timed root waypoints with free feet for walking. Since the pinned
 SONIC G1 interface does not consume world root XY, the sequencer checks actual
@@ -147,19 +147,40 @@ This change must be validated and frozen consistently across methods; it is a
 new pilot protocol, not part of the earlier prompt-only comparison.
 The current calibration sequencer holds the terminal walking reference during
 settlement. Close and hold also preserve references instead of sampling another
-motion. Reach/lower pre-curl the distal fingers. Descent ends on a measured
-wrist-frame acquisition region, then a checked measured-pose reference is held
-through frozen SONIC while fingers close. Missing alignment or missing sustained
-opposing contact stops the trial. These shared state-based nominal transitions
-are not learned residuals, teacher corrections, or extra user instructions.
+motion. Reach/lower keep the fingers fully open by default; the historical
+distal-finger preshape remains an explicit calibration control. Descent uses a
+geometry-derived wrist-frame acquisition gate computed from the measured hand
+center site and current block extents. If the gate is missed, bounded
+lower-phase replanning requests a fresh ARDY reference from current execution
+history. At acquisition, a checked measured-pose reference is held through
+frozen SONIC while fingers close. Missing alignment after the bounded replans
+or missing sustained opposing contact stops the trial. These shared state-based
+nominal transitions are not learned residuals, teacher corrections, or extra
+user instructions.
 Both hands, including fingers and palms on the wrist-yaw bodies, may contact
 the tabletop and table legs through normal contact physics. Other robot-table
 contacts, non-right-hand robot-block contacts, non-foot robot-floor contacts,
 and block-floor contacts remain prohibited. This revised pilot contact policy
 is shared across methods; historical trials retain their original policy.
 The success threshold remains a two-second hold, but collection continues
-through the complete configured three-second hold phase, subject to failure
+through the complete configured five-second hold phase, subject to failure
 stops and the 30-second timeout. Later failures invalidate earlier success.
+Threshold achievement is retained as a separate event; the block must also
+remain above the clearance threshold with opposing contact at the recorded
+episode end. A later loss onto the tabletop is a failed retained grasp even
+without a prohibited collision. Historical success labels are not rewritten.
+The shared pilot hand gains are now 6\,Nm/rad stiffness and
+0.4\,Nm\,s/rad damping, under unchanged joint and motor torque bounds.
+The shared tabletop contact solver uses Newton with elliptic friction cones,
+impedance ratio 10 and tolerance $10^{-10}$, without NoSlip post-processing.
+This calibrates soft-contact drift without changing mass, friction coefficients,
+timestep, attachment policy, or the frozen models. These settings must be
+identical across compared methods and frozen after validation.
+The default generated lift lasts 4.8\,s; the historical 3.2\,s duration remains
+configurable. Closure targets retain their previous values, while the acquisition
+gate is derived from the measured hand-center site and block geometry. Longer
+calibration holds and bounded alignment replans remain within the common 30-second
+budget.
 Two hand-only diagnostic trials have passed physical lift/contact/hold checks;
 complete walk-to-grasp success is not yet established. Those partial successes
 must not enter the complete-task success denominator or a verified expert set.
@@ -481,6 +502,8 @@ The instructed block's lowest point must clear the tabletop by 5\,cm and remain
 held for 2\,s within 30\,s of simulated time, without a fall or prohibited
 collision. Fall/clearance thresholds will be fixed in the evaluation config.
 Hand-table contact is permitted under the shared pilot contact policy above.
+Report threshold achievement and final retained success separately; a later
+drop before recording ends does not count as retained task success.
 We plan \textbf{20 paired episodes per core condition per configuration}.
 Match instructions, initial states, perturbations, and ARDY random seeds;
 closed-loop nominal motions may subsequently diverge. B1, I2, and P target

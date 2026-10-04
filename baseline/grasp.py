@@ -16,11 +16,11 @@ from baseline.adapters.joints import ISAACLAB_JOINT_NAMES
 
 
 PHASES = (("approach", 2.0), ("settle", .8), ("prepare", 1.2), ("reach", 3.2), ("lower", 3.2),
-          ("close", 2.0), ("lift", 3.2), ("hold", 3.0))
+          ("close", 2.0), ("lift", 4.8), ("hold", 5.0))
 DIRECT_START_PHASES = PHASES[3:]
 HOLD_PHASES = frozenset({"settle", "close", "hold"})
 DEFAULT_START_BACK = .45
-DEFAULT_TABLE_STANDOFF = .22
+DEFAULT_TABLE_STANDOFF = .20
 APPROACH_POSITION_TOLERANCE = .06
 APPROACH_SPEED_LIMIT = .12
 APPROACH_HEADING_TOLERANCE = np.deg2rad(12)
@@ -65,17 +65,36 @@ def initial_body_reference(default):
     return reference
 
 
-def hand_alignment(simulation):
-    """A calibrated acquisition region in the measured wrist frame, in metres."""
+def grasp_center_local(simulation):
+    """Return the configured hand-center site in the measured wrist frame."""
+    site = simulation.model.site("task_grasp_center").id
+    wrist, rotation = wrist_pose(simulation)
+    return rotation.T @ (simulation.data.site_xpos[site] - wrist)
+
+
+def hand_alignment(simulation, z_min=None):
+    """Check the block against the measured hand center and block dimensions."""
     block = int(simulation.model.joint("task_block_free").qposadr[0])
     wrist, rotation = wrist_pose(simulation)
     local = rotation.T @ (simulation.data.qpos[block:block + 3] - wrist)
-    ready = .095 < local[0] < .175 and .005 < local[1] < .085 and -.040 < local[2] < .020
-    return {"source": "mujoco_state", "cube_in_wrist_m": local.tolist(), "ready": bool(ready)}
+    center = grasp_center_local(simulation)
+    geom = simulation.model.geom("task_block_geom").id
+    half = np.asarray(simulation.model.geom_size[geom], dtype=float)
+    # The admissible volume follows the actual block size.  The extra half-size
+    # margin accounts for the opposing finger pads around the block center.
+    margin = 1.5 * half
+    lower = center - margin
+    upper = center + margin
+    if z_min is not None:
+        lower[2] = max(lower[2], float(z_min))
+    ready = bool(np.all(local > lower) and np.all(local < upper))
+    return {"source": "mujoco_state", "cube_in_wrist_m": local.tolist(),
+            "grasp_center_wrist_m": center.tolist(), "gate_lower_wrist_m": lower.tolist(),
+            "gate_upper_wrist_m": upper.tolist(), "ready": ready}
 
 
 def build_scene(repo, path, xy, start_back=DEFAULT_START_BACK, table_standoff=DEFAULT_TABLE_STANDOFF,
-                direct_start=False):
+                direct_start=False, contact_profile="elliptic"):
     """Extend pinned SONIC assets, without modifying their source checkout."""
     xy = np.asarray(xy, dtype=float)
     if xy.shape != (2,) or not np.isfinite(xy).all():
@@ -101,6 +120,16 @@ def build_scene(repo, path, xy, start_back=DEFAULT_START_BACK, table_standoff=DE
         else:
             destination.attrib.update(child.attrib)
             destination.extend(child)
+    if contact_profile not in {"legacy", "elliptic"}:
+        raise ValueError("Unknown contact solver profile")
+    contact_solver = {"cone": "pyramidal", "solver": "Newton", "impratio": 1.,
+                      "tolerance": 1e-8, "noslip_iterations": 0}
+    if contact_profile == "elliptic":
+        contact_solver.update(cone="elliptic", impratio=10., tolerance=1e-10)
+        option = root.find("option")
+        if option is None:
+            option = ET.SubElement(root, "option")
+        option.attrib.update({key: str(value) for key, value in contact_solver.items()})
     world = root.find("worldbody")
     # This is an initial condition, applied before physics, not a motion command.
     pelvis = root.find(".//body[@name='pelvis']")
@@ -146,6 +175,7 @@ def build_scene(repo, path, xy, start_back=DEFAULT_START_BACK, table_standoff=DE
             "robot_start_xy_m": initial_position[:2].tolist(),
             "start_back_m": start_back, "table_standoff_m": table_standoff,
             "direct_start": bool(direct_start),
+            "contact_profile": contact_profile, "contact_solver": contact_solver,
             "grounding_source": "mujoco_state", "camera_input": False,
             "approach_position_tolerance_m": APPROACH_POSITION_TOLERANCE,
             "approach_speed_limit_mps": APPROACH_SPEED_LIMIT,
@@ -160,8 +190,9 @@ def build_scene(repo, path, xy, start_back=DEFAULT_START_BACK, table_standoff=DE
             "phases": [list(p) for p in (DIRECT_START_PHASES if direct_start else PHASES)],
             "hold_phases": sorted(HOLD_PHASES),
             "reference_transition_seconds": {"approach": .2, "generated_arm": .4,
-                                             "measured_acquisition_hold": .1},
-            "acquisition_region_wrist_m": [[.095, .175], [.005, .085], [-.040, .020]],
+                                             "measured_acquisition_hold": .3},
+            "acquisition_region_wrist_m": None,
+            "acquisition_gate_source": "measured_hand_center_and_block_geometry",
             "hand_table_contact_allowed": True,
             "prohibited_contacts": ["non-hand robot-table", "non-right-hand robot-block",
                                     "non-foot robot-floor", "block-floor"],
@@ -246,16 +277,18 @@ def settle_constraints(simulation, duration):
             "root_heading_rad": [float(Rotation.from_quat(pose[[4, 5, 6, 3]]).as_euler("xyz")[2])] * 2}
 
 
-def phase_constraints(simulation, phase, duration, standing_qpos, standing_wrist_rotation):
+def phase_constraints(simulation, phase, duration, standing_qpos, standing_wrist_rotation,
+                      wrist_offset=None):
     """Ground one phase in current GT state; interpolate sparse world wrist goals."""
     block = simulation.model.joint("task_block_free").qposadr[0]
     center = simulation.data.qpos[block:block + 3].copy()
-    # This is a nominal reference goal, calibrated with the shared controller.
-    # Actual hand alignment ends descent before the entire clip is consumed.
-    goal = center - np.array([.160, .035, .015])
+    # Use the measured hand-center site in the wrist frame.  An explicit offset
+    # remains available for controlled ablations and is never tied to cube XY.
+    local_offset = grasp_center_local(simulation) if wrist_offset is None else np.asarray(wrist_offset)
+    start, start_rotation = wrist_pose(simulation)
+    goal = center - start_rotation @ local_offset
     frames = int(duration * 25)
     indices = np.unique(np.r_[np.arange(0, frames, 4), frames - 1]).astype(int)
-    start, start_rotation = wrist_pose(simulation)
     if phase == "lift":
         goal = start + np.array([0., 0., .14])
     u = np.clip(indices / max(1, .75 * (frames - 1)), 0, 1)
@@ -276,7 +309,11 @@ def phase_constraints(simulation, phase, duration, standing_qpos, standing_wrist
         positions[:, 2] = start[2] + up * (high - start[2])
     end_rotation = start_rotation if phase == "lift" else np.eye(3)
     rotations = Slerp([0, 1], Rotation.from_matrix(np.stack([start_rotation, end_rotation])))(u).as_matrix()
+    yaw = float(standing_qpos[7 + ISAACLAB_JOINT_NAMES.index("waist_yaw_joint")])
+    roll = float(standing_qpos[7 + ISAACLAB_JOINT_NAMES.index("waist_roll_joint")])
     pitch = float(standing_qpos[7 + ISAACLAB_JOINT_NAMES.index("waist_pitch_joint")])
+    torso_yaw = np.full(len(indices), yaw)
+    torso_roll = np.full(len(indices), roll)
     torso_pitch = np.full(len(indices), pitch)
     if phase == "prepare":
         # The pinned G1 has a rigid head. A small waist inclination is a nominal
@@ -287,6 +324,7 @@ def phase_constraints(simulation, phase, duration, standing_qpos, standing_wrist
     return {"schema_version": 1, "coordinate_frame": "mujoco_world", "units": "SI",
             "frame_indices": indices.tolist(), "wrist_positions": positions.tolist(),
             "wrist_rotations": rotations.tolist(),
+            "torso_yaw_rad": torso_yaw.tolist(), "torso_roll_rad": torso_roll.tolist(),
             "torso_pitch_rad": torso_pitch.tolist(),
             "standing_qpos": np.asarray(standing_qpos).tolist(),
             "standing_wrist_rotation": np.asarray(standing_wrist_rotation).tolist()}
@@ -320,6 +358,9 @@ class GraspEvaluator:
         self.max_hold = 0.0
         self.max_clearance = -1.0
         self.success_time = None
+        self.retained_at_end = False
+        self.post_success_loss_samples = 0
+        self.lost_after_success = False
         self.contact_steps = 0
         self.hand_table_contact_steps = 0
         self.samples = 0
@@ -404,6 +445,13 @@ class GraspEvaluator:
                 self.success_time = float(data.time)
         else:
             self.hold_start = None
+        self.retained_at_end = bool(self.hold_start is not None)
+        if self.success_time is not None and not self.retained_at_end:
+            self.post_success_loss_samples += 1
+            # A threshold event is evidence, not a reversible success state.
+            # Keep a late loss sticky even if the fingers happen to re-contact
+            # the block before the episode ends.
+            self.lost_after_success = True
         self.max_clearance = max(self.max_clearance, clearance)
         self.samples += 1
         # mj_step leaves derived poses at the beginning of its integration step.
@@ -414,9 +462,15 @@ class GraspEvaluator:
                               *data.qpos[simulation.finger_q], *simulation.finger_target])
 
     def summary(self):
-        success = self.success_time is not None and self.failure is None
+        retained = self.retained_at_end and not self.lost_after_success
+        success = self.success_time is not None and self.failure is None and retained
+        reason = self.failure or ("grasp_lost_after_success" if self.lost_after_success
+                                  else None if success else "timeout")
         return {"task_success": success, "success_sim_time": self.success_time,
-                "failure_reason": self.failure if self.failure else (None if success else "timeout"),
+                "failure_reason": reason, "success_threshold_reached": self.success_time is not None,
+                "retained_at_end": retained,
+                "lost_after_success": self.lost_after_success,
+                "post_success_loss_samples": self.post_success_loss_samples,
                 "max_block_clearance_m": self.max_clearance, "max_continuous_hold_seconds": self.max_hold,
                 "opposing_finger_contact_steps": self.contact_steps, "physics_samples": self.samples,
                 "hand_table_contact_steps": self.hand_table_contact_steps,

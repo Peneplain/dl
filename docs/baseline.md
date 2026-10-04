@@ -86,6 +86,15 @@ clocks, tracking and model provenance. Buffer underruns hold the terminal
 nominal pose and are recorded. Reference rejection and safety stops are
 failures, not successful task outcomes.
 
+At the 50 Hz SONIC clock, each run also writes `nominal_context.csv`. It
+contains the causal executed body state and finger targets, the current task
+phase, and the complete nominal position, velocity, quaternion, and time-offset
+lookahead supplied to SONIC. `sim_time` and `frame_index` align this file with
+`trajectory.csv`; grasp object, wrist, and contact labels remain in the 200 Hz
+`task.csv`. This is a frozen B0 recording interface for later Risk/Residual
+window extraction: it never contains future executed states or teacher outputs
+and adds no learning-package dependency.
+
 Reference converters are offline tools. SONIC packet output is a serialization
 fixture; it does not publish a socket or DDS command. Deploy CSV conversion does
 not start the upstream C++ deployment reader.

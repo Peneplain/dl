@@ -15,17 +15,17 @@ Models persist, but physics, fingers, SONIC history and buffers reset per attemp
 ## Execution and assessment
 
 The sequencer starts with a two-second SONIC stand at the grounded table target,
-then runs reach (3.2 s), lower (3.2 s maximum), close (2 s), lift (3.2 s),
-and hold (3 s). With `--walk`, the robot starts farther back and adds approach
+then runs reach (3.2 s), lower (3.2 s maximum), close (2 s), lift (4.8 s),
+and hold (5 s). With `--walk`, the robot starts farther back and adds approach
 (2 s), settle (.8 s), and prepare (1.2 s) before reaching.
 Approach transitions take .2 s; generated arm references take .4 s.
 Acquisition switches to a measured-pose hold through SONIC over .1 s. The whole trial,
 including approach, remains limited to 30 simulated seconds.
 
-The default root starts at X=.09 m, 0.22 m before the table's front edge,
-with lateral position aligned to the block. `--table-standoff .22` controls
+The default root starts at X=.11 m, 0.20 m before the table's front edge,
+with lateral position aligned to the block. `--table-standoff .20` controls
 that target distance. With `--walk`, `--start-back .45` adds 0.45 m of initial
-separation and starts the root at X=-.36 m. The initial root position
+separation and starts the root at X=-.34 m. The initial root position
 is part of the scene/reset only. All subsequent displacement must result from
 SONIC torques and free-base physics.
 
@@ -53,7 +53,7 @@ target, within 12 degrees of the table-facing heading, below .12 m/s horizontal
 speed, and with both feet contacting the floor for .4 continuous seconds.
 Crossing closer than the configured standoff minus .10 m stops the attempt.
 A missed target or an unstable stop ends the trial with an explicit failure.
-The configurable standoff range is .20-.55 m; the current .22 m pilot default
+The configurable standoff range is .20-.55 m; the current .20 m pilot default
 replaces the unreachable historical .42 m stance. Complete task success with
 the new defaults is still being calibrated. These thresholds are pilot
 settings that must be calibrated and shared across
@@ -100,20 +100,43 @@ configured 0.9-second lookahead. The task transitions described above blend
 checked references;
 velocities are recomputed after resampling/transitions. Fingers receive named,
 bounded targets with a shared 2.5 rad/s rate limit and the existing torque PD.
+The current torque gains are 6 Nm/rad stiffness and .4 Nm s/rad damping
+(historical gains: 4 and .2). Upstream motor torque and finger joint limits are
+retained; a larger gain does not bypass a saturated motor. The tabletop contact
+profile uses elliptic cones, Newton, `impratio=10`, `tolerance=1e-10`, and no
+NoSlip post-processing. The `legacy` profile reproduces pyramidal cones and
+unit impedance ratio for calibration comparisons. Both profiles use the same
+friction coefficients, mass, timestep, free joints, controller, and checks.
 The root remains free and the block has a free joint. Lifting depends on hand
 frictional contacts, with no weld, attachment, scripted object motion or support
 forces. Physics advances at 200 Hz. Models stay loaded across batch episodes,
 while robot, object, hand targets, controller history and buffers reset.
 
-During reach/lower, distal index/middle targets are pre-curled to 1.3 rad.
-Descent ends when the measured block center enters the wrist-frame acquisition
-region X=(.095,.175), Y=(.005,.085), Z=(-.040,.020) m. The existing .16/.035/.015 m
-reference offset and this physical acquisition region are distinct quantities.
-At acquisition, the controller holds the measured pose and closes the fingers,
-including .6 rad thumb opposition. Missing alignment or less than .1 s of
-continuous opposing contact at the end of close stops the trial explicitly.
+During reach/lower, the default `--hand-approach open` commands all fingers open
+until the measured alignment gate passes, then uses the bounded closure targets.
+`--hand-approach preshaped` reproduces the historical 1.3-rad distal index/middle
+preshape for comparisons. The two approaches use the same geometry-derived
+acquisition gate, closure rate, motor limits and opposing-contact check. The gate
+is recomputed from the current MuJoCo wrist pose, the configured
+`task_grasp_center` site and the current block half extents, with a 1.5x extent
+margin. An optional `--acquisition-z-min` only tightens its lower wrist-frame
+bound. The optional `--wrist-offset` is a calibration override for the nominal
+ARDY goal and is distinct from the physical gate.
+When descent misses the gate, up to the configured measured-state lower replans
+request fresh ARDY references from current execution history. At acquisition,
+the controller holds the measured pose through a configurable transition and
+closes the fingers, including .6 rad thumb opposition. Missing alignment after
+those replans or less than .1 s of continuous opposing contact at the end of
+close stops the trial explicitly.
 These are shared nominal task rules, not learned residuals or user corrections.
 All thresholds remain calibration settings, not frozen evaluation results.
+
+Every generated hand phase also conditions ARDY on the measured waist yaw,
+roll, and pitch. The preparation phase changes only the pitch trajectory; the
+other two axes stay at their measured values. This prevents an unconstrained
+torso rotation from creating a reference that the shared joint-limit checker
+must reject after a valid hand alignment, while keeping the check itself
+unchanged.
 
 This collector pauses **simulated time** during ARDY generation. Batch physics
 runs without wall-clock pacing; manual execution is paced for viewing. It records generation, loading, SONIC latency,
@@ -126,12 +149,18 @@ above the 0.70 m tabletop, maintained for two continuous seconds within 30 s,
 with opposing thumb and index/middle contacts (>0.01 N normal force) and no
 fall/prohibited collision. Interrupted contact resets the hold interval.
 Open-hand phases cannot trigger a missing-grasp failure. The collector ends
-after the complete configured three-second hold phase, at a failure stop, or
+after the complete configured five-second hold phase, at a failure stop, or
 at the 30 s timeout. Reaching the success threshold during lift or hold does
 not truncate these phases. If the configured hold finishes without success,
 the collector continues holding until success or timeout. A later prohibited
 contact or fall still invalidates an earlier success. Video duration follows
-recorded simulation time; there is no fixed 14-second cap. Old recordings that
+recorded simulation time. `success_threshold_reached` preserves the original
+two-second event; `retained_at_end` reports whether the block remains above the
+clearance threshold with opposing contact at the final assessment. Both are
+required for `task_success`. Otherwise, `grasp_lost_after_success` identifies
+a later drop, including a drop onto the table that causes no prohibited contact.
+Historical success labels remain intact; the audit tool reports their retention
+separately. There is no fixed 14-second cap. Old recordings that
 ended early require a new rollout to include the missing hold motion.
 The added contact criterion is a conservative pilot operationalization of
 “held”; contact thresholds/hand geometry need validation before evaluation.

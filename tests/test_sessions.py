@@ -76,7 +76,7 @@ class SessionTests(unittest.TestCase):
         for fail_in_hold in (False, True):
             with self.subTest(fail_in_hold=fail_in_hold), \
                     tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
-                args = parse_args(["batch", "--grasp"])
+                args = parse_args(["batch", "--grasp", "--hold-seconds", "3"])
                 runtime = ExecutionRuntime(args, directory)
                 simulation = Mock()
                 simulation.data = SimpleNamespace(time=0.)
@@ -108,7 +108,9 @@ class SessionTests(unittest.TestCase):
                             raise SimulationStop("fall")
                 runtime.tick = Mock(side_effect=tick)
                 try:
-                    with patch("baseline.execution.build_scene", return_value={"robot_start_xy_m": [.09, -.08]}), \
+                    with patch("baseline.execution.build_scene", return_value={
+                            "robot_start_xy_m": [.09, -.08], "phases": [["hold", 3.]],
+                            "acquisition_region_wrist_m": [[0, 1], [0, 1], [-.04, .02]]}), \
                             patch("baseline.execution.GraspEvaluator", return_value=evaluator), \
                             patch("baseline.execution.approach_state", return_value={"ready": True}), \
                             patch("baseline.execution.ground_scene", return_value={}), \
@@ -193,6 +195,18 @@ class SessionTests(unittest.TestCase):
                 resumed = parse_args(["batch", "--resume", directory])
                 self.assertEqual(resumed.walk, grasp and not direct_start)
                 self.assertEqual(resumed.direct_start, direct_start)
+
+    def test_hand_calibration_arguments_are_bounded_and_recorded(self):
+        args = parse_args(["batch", "--grasp", "--finger-kp", "6", "--finger-kd", ".4",
+                           "--hand-approach", "open", "--hold-seconds", "10"])
+        config = config_for(args)
+        self.assertEqual((config["finger_kp"], config["finger_kd"], config["hand_approach"],
+                          config["hold_seconds"]), (6., .4, "open", 10.))
+        with redirect_stdout(io.StringIO()):
+            for option, value in (("--finger-kp", "0"), ("--finger-kp", "nan"),
+                                  ("--finger-kd", "-1"), ("--hold-seconds", "2")):
+                with self.subTest(option=option, value=value), self.assertRaises(SystemExit):
+                    parse_args(["batch", "--grasp", option, value])
 
     def test_resume_rejects_changed_source_or_completed_evidence(self):
         from baseline.common import sha256

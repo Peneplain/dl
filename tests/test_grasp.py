@@ -26,6 +26,7 @@ FIXTURE = """<mujoco><worldbody>
   <body name="pelvis" pos="0 0 .8"><freejoint name="root"/>
     <geom type="sphere" size=".02" mass="1" contype="0" conaffinity="0"/>
     <body name="right_wrist_yaw_link" pos=".4 -.2 .15">
+      <site name="task_grasp_center" pos=".125 .035 0" size=".004"/>
       <body name="right_hand_thumb_1_link" pos="0 .03 0">
         <geom type="box" size=".02 .012 .02" mass=".1"/>
       </body>
@@ -93,6 +94,30 @@ class GraspMetricTests(unittest.TestCase):
                     np.cos(np.pi / 8), np.sin(np.pi / 8), 0, 0]
                 evaluator.observe(sim)
                 self.assertAlmostEqual(evaluator.max_clearance, .085 - np.sqrt(2) * .03)
+            finally:
+                evaluator.close()
+
+    def test_later_contact_loss_is_not_reported_as_retained_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sim, evaluator = self.fixture(directory)
+            evaluator.phase = "hold"
+            try:
+                def force(model, data, index, output):
+                    output[0] = 1.
+                with patch("baseline.grasp.mujoco.mj_contactForce", side_effect=force):
+                    evaluator.observe(sim)
+                    sim.data.time = 2.
+                    evaluator.observe(sim)
+                self.assertTrue(evaluator.summary()["task_success"])
+                sim.data.time = 2.005
+                with patch("baseline.grasp.mujoco.mj_contactForce"):
+                    evaluator.observe(sim)
+                result = evaluator.summary()
+                self.assertTrue(result["success_threshold_reached"])
+                self.assertFalse(result["retained_at_end"])
+                self.assertFalse(result["task_success"])
+                self.assertEqual(result["failure_reason"], "grasp_lost_after_success")
+                self.assertEqual(result["post_success_loss_samples"], 1)
             finally:
                 evaluator.close()
 
@@ -187,7 +212,11 @@ class GraspMetricTests(unittest.TestCase):
             self.assertEqual(model.nu, 43)
             self.assertEqual(model.ncam, 2)
             root_q = int(model.joint("floating_base_joint").qposadr[0])
-            self.assertAlmostEqual(model.qpos0[root_q], -.36)
+            self.assertAlmostEqual(model.qpos0[root_q], -.34)
+            self.assertEqual(model.opt.cone, mujoco.mjtCone.mjCONE_ELLIPTIC)
+            self.assertEqual(model.opt.solver, mujoco.mjtSolver.mjSOL_NEWTON)
+            self.assertEqual(model.opt.impratio, 10.)
+            self.assertEqual(model.opt.noslip_iterations, 0)
             self.assertEqual(settings["grounding_source"], "mujoco_state")
             self.assertFalse(settings["camera_input"])
 
@@ -200,11 +229,11 @@ class GraspMetricTests(unittest.TestCase):
             settings = build_scene(repo, path, [.4, -.22], start_back=0., direct_start=True)
             model = mujoco.MjModel.from_xml_path(str(path))
             root_q = int(model.joint("floating_base_joint").qposadr[0])
-            np.testing.assert_allclose(model.qpos0[root_q:root_q + 2], [.09, -.08], atol=1e-8)
+            np.testing.assert_allclose(model.qpos0[root_q:root_q + 2], [.11, -.08], atol=1e-8)
             self.assertTrue(settings["direct_start"])
             self.assertTrue(settings["hand_table_contact_allowed"])
             self.assertIn("non-hand robot-table", settings["prohibited_contacts"])
-            np.testing.assert_allclose(settings["robot_start_xy_m"], [.09, -.08], atol=1e-8)
+            np.testing.assert_allclose(settings["robot_start_xy_m"], [.11, -.08], atol=1e-8)
             self.assertEqual([name for name, _ in DIRECT_START_PHASES],
                              ["reach", "lower", "close", "lift", "hold"])
             self.assertEqual(settings["phases"], [list(phase) for phase in DIRECT_START_PHASES])
@@ -256,7 +285,7 @@ class GraspMetricTests(unittest.TestCase):
             sim, evaluator = self.fixture(directory)
             try:
                 initial = ground_scene(sim)
-                self.assertAlmostEqual(initial["approach_target_xy"][0], -.06)
+                self.assertAlmostEqual(initial["approach_target_xy"][0], -.04)
                 delta = np.array([1.1, -.7, 0.])
                 sim.data.qpos[:3] += delta
                 sim.data.qpos[evaluator.block_q:evaluator.block_q + 3] += delta

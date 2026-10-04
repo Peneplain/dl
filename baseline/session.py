@@ -31,6 +31,7 @@ REASONS = {
     "prepare_target_drift": "Robot drifted outside the approach target during preparation",
     "grasp_alignment_missed": "Hand did not reach the block acquisition region",
     "grasp_not_acquired": "Closing did not establish stable opposing finger contacts",
+    "grasp_lost_after_success": "Block was lost after reaching the hold threshold",
     "approach_too_close": "Walking crossed the table standoff limit",
     "direct_start_not_settled": "Direct-start pose did not remain stable before manipulation",
 }

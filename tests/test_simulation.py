@@ -9,10 +9,45 @@ from unittest.mock import Mock
 import numpy as np
 
 from baseline.adapters.reference import ReferenceBuffer, ReferenceSequence
+from baseline.adapters.joints import ARM_INDICES
+from baseline.reference_checks import ReferenceChecks
 from baseline.simulation import SonicSimulation
 
 
 class SimulationReferenceTests(unittest.TestCase):
+    def test_optional_correction_preserves_nominal_and_limits_current_offset(self):
+        simulation = SonicSimulation.__new__(SonicSimulation)
+        simulation.policy = SimpleNamespace(future_count=10, future_step=5)
+        simulation.data = SimpleNamespace(time=0.)
+        simulation.buffer = ReferenceBuffer()
+        times = np.arange(51) * .02
+        simulation.buffer.push(ReferenceSequence(
+            times, np.full((len(times), 29), .5),
+            np.tile([1, 0, 0, 0], (len(times), 1))))
+        simulation.end_time = float(times[-1])
+        simulation.current_ref = np.full(29, .5)
+        simulation.current_quat = np.array([1, 0, 0, 0])
+        simulation.holding = False
+        simulation.terminal_hold_logged = False
+        simulation.ranges = np.tile([-2., 2.], (29, 1))
+        simulation.reference_checks = ReferenceChecks(simulation.ranges)
+        simulation.event = Mock()
+        provider = Mock()
+        provider.request.side_effect = lambda sim, ref: np.broadcast_to(
+            np.array([.1 if i in ARM_INDICES else 0 for i in range(29)]),
+            ref.joint_pos.shape).copy()
+        simulation.correction_provider = provider
+        positions, velocities, _ = simulation.lookahead()
+        np.testing.assert_allclose(simulation._nominal_lookahead[0], .5)
+        self.assertAlmostEqual(positions[0, ARM_INDICES[0]], .51, places=5)
+        nonarms = [i for i in range(29) if i not in ARM_INDICES]
+        np.testing.assert_allclose(positions[:, nonarms], .5)
+        self.assertTrue(np.isfinite(velocities).all())
+        simulation.data.time = .02
+        provider.request.side_effect = lambda sim, ref: np.zeros_like(ref.joint_pos)
+        positions, _, _ = simulation.lookahead()
+        self.assertAlmostEqual(positions[0, ARM_INDICES[0]], .5, places=5)
+
     def test_reference_limits_apply_to_all_29_body_joints(self):
         simulation = SonicSimulation.__new__(SonicSimulation)
         lower = np.arange(29, dtype=np.float32) / 100
@@ -38,7 +73,7 @@ class SimulationReferenceTests(unittest.TestCase):
         np.testing.assert_allclose(reference.joint_pos, np.repeat(pose[None, 7:], 2, axis=0), atol=1e-7)
         np.testing.assert_array_equal(reference.velocities(), np.zeros((2, 29)))
         np.testing.assert_array_equal(pose, original)
-        self.assertEqual(simulation.install.call_args.kwargs["transition"], .1)
+        self.assertEqual(simulation.install.call_args.kwargs["transition"], .3)
 
     def test_executor_holds_actual_endpoint_and_logs_coverage_once(self):
         simulation = SonicSimulation.__new__(SonicSimulation)

@@ -36,13 +36,41 @@ class ExecutionRuntime:
             scene = None
             if self.args.grasp:
                 scene = self.session / "scene.xml"
-                build_scene(self.args.sonic_repo, scene, self.args.cube_xy or [.40, -.22],
+                xy = self.args.cube_xy
+                if xy is None:
+                    x0, x1, y0, y1 = self.args.xy_range
+                    xy = [(x0 + x1) / 2., (y0 + y1) / 2.]
+                build_scene(self.args.sonic_repo, scene, xy,
                             0.0 if self.args.direct_start else self.args.start_back,
-                            self.args.table_standoff, direct_start=self.args.direct_start)
+                            self.args.table_standoff, direct_start=self.args.direct_start,
+                            contact_profile=self.args.contact_profile)
             self.simulation = SonicSimulation(self.args.assets, self.args.sonic_repo, None,
                                              policy=self.policy, scene=scene, gui=self.args.gui,
+                                             finger_kp=self.args.finger_kp, finger_kd=self.args.finger_kd,
                                              initial_body_reference=initial_body_reference(
                                                  self.policy.parameters.default) if self.args.grasp else None)
+        return self.simulation
+
+    def _load_episode_scene(self, scene):
+        """Compile the exact per-episode XML while reusing the frozen policy."""
+        scene = Path(scene)
+        # Keep lightweight executor fixtures usable without constructing a
+        # MuJoCo model; production runs always reach the branch below.
+        if not isinstance(self.simulation, SonicSimulation):
+            self.simulation.scene = scene
+            return self.simulation
+        if self.simulation is not None and Path(self.simulation.scene).resolve() == scene.resolve():
+            return
+        if self.simulation is not None:
+            # The previous run has already ended before the next attempt starts.
+            # Reusing its MuJoCo model would silently ignore this episode's
+            # block pose and contact profile even though the XML was recorded.
+            self.simulation.close()
+        self.simulation = SonicSimulation(
+            self.args.assets, self.args.sonic_repo, None, policy=self.policy,
+            scene=scene, gui=self.args.gui,
+            finger_kp=self.args.finger_kp, finger_kd=self.args.finger_kd,
+            initial_body_reference=initial_body_reference(self.policy.parameters.default))
         return self.simulation
 
     def idle(self):
@@ -110,6 +138,54 @@ class ExecutionRuntime:
         if self.args.mode == "manual":
             time.sleep(max(0, .02 - (time.perf_counter() - started)))
 
+    def _replan_alignment(self, simulation, evaluator, request, output, final, phase_index):
+        """Use measured state to retry lower alignment without fixed cube coordinates."""
+        for retry in range(1, self.args.alignment_replans + 1):
+            alignment = hand_alignment(simulation, self.args.acquisition_z_min)
+            if alignment["ready"]:
+                final["grasp_alignment"] = alignment
+                simulation.event("grasp_alignment_reached", **alignment, replan=retry - 1)
+                simulation.hold_measured_pose("grasp_alignment_reached",
+                                              transition=self.args.acquisition_transition)
+                return True
+            remaining = 30. - float(simulation.data.time)
+            duration = min(self.args.alignment_replan_seconds, max(0., remaining - .4))
+            if duration < .4:
+                break
+            phase = f"lower_replan_{retry:02d}"
+            simulation.task_phase = phase
+            grounding = ground_scene(simulation, self.args.table_standoff)
+            write_json(output / "grounding" / f"{phase}.json", grounding)
+            standing = simulation.body_pose().copy()
+            _, standing_rotation = wrist_pose(simulation)
+            constraints = phase_constraints(simulation, "lower", duration, standing, standing_rotation,
+                                            wrist_offset=self.args.wrist_offset)
+            prompt = request.get("phase_prompts", {}).get("lower") or phase_prompt(
+                request["prompt"], "lower", request["prompt_profile"])
+            reference_dir = output / "ardy" / phase
+            report = self.generate(prompt, duration, (request["seed"] + phase_index + retry) % 2**32,
+                                   reference_dir, history_qpos=simulation.history_qpos(self.args.history_frames),
+                                   pose_constraints=constraints)
+            final["phase_reports"].append({"phase": phase, "mode": "measured_state_replan", **report})
+            reference = simulation.load_reference(reference_dir / "reference.npz")
+            simulation.event("task_phase", phase=phase, prompt=prompt, replan=True,
+                             grounding_source="mujoco_state")
+            simulation.install(reference, transition=.4)
+            end = min(30., simulation.end_time + .2)
+            print(f"[ALIGN] Replanning lower phase from measured state ({retry}/{self.args.alignment_replans}).",
+                  flush=True)
+            while simulation.data.time < end - 1e-8:
+                simulation.command_fingers({n: 0. for n in RIGHT_CLOSED})
+                self.tick(evaluator)
+                alignment = hand_alignment(simulation, self.args.acquisition_z_min)
+                if alignment["ready"]:
+                    final["grasp_alignment"] = alignment
+                    simulation.event("grasp_alignment_reached", **alignment, replan=retry)
+                    simulation.hold_measured_pose("grasp_alignment_reached",
+                                                  transition=self.args.acquisition_transition)
+                    return True
+        return False
+
     def run(self, request, output, plan_hash):
         started = time.perf_counter()
         self.model_load_failed = False
@@ -139,13 +215,27 @@ class ExecutionRuntime:
                 start_back = 0.0 if self.args.direct_start else self.args.start_back
                 settings = build_scene(self.args.sonic_repo, scene, request["cube_xy"],
                                        start_back, self.args.table_standoff,
-                                       direct_start=self.args.direct_start)
+                                       direct_start=self.args.direct_start,
+                                       contact_profile=self.args.contact_profile)
                 settings["prompt_profile"] = request["prompt_profile"]
+                settings.update(finger_kp_nm_per_rad=self.args.finger_kp,
+                                finger_kd_nm_s_per_rad=self.args.finger_kd,
+                                hand_approach=self.args.hand_approach,
+                                final_hold_seconds=self.args.hold_seconds,
+                                nominal_wrist_offset_m=self.args.wrist_offset,
+                                acquisition_gate_source="measured_hand_center_and_block_geometry",
+                                alignment_replans=self.args.alignment_replans,
+                                alignment_replan_seconds=self.args.alignment_replan_seconds,
+                                acquisition_transition_seconds=self.args.acquisition_transition,
+                                lift_seconds=self.args.lift_seconds)
+                settings["phases"] = [[name, self.args.hold_seconds if name == "hold" else
+                                      self.args.lift_seconds if name == "lift" else duration]
+                                      for name, duration in settings["phases"]]
                 write_json(output / "settings.json", settings)
+                simulation = self._load_episode_scene(scene)
                 block = int(simulation.model.joint("task_block_free").qposadr[0])
                 simulation.model.qpos0[block:block + 2] = request["cube_xy"]
                 simulation.model.qpos0[simulation.root_q:simulation.root_q + 2] = settings["robot_start_xy_m"]
-                simulation.scene = scene
             simulation.start_run(output)
             active = True
             if self.args.grasp:
@@ -180,6 +270,11 @@ class ExecutionRuntime:
             else:
                 phases = (("motion", request["duration"]),) if request["prompt"] or request.get("reference") else ()
             for phase_index, (phase, duration) in enumerate(phases):
+                simulation.task_phase = phase
+                if evaluator and phase == "hold":
+                    duration = self.args.hold_seconds
+                if evaluator and phase == "lift":
+                    duration = self.args.lift_seconds
                 stage(phase)
                 planned_hold = evaluator is not None and phase in HOLD_PHASES
                 if evaluator:
@@ -196,7 +291,8 @@ class ExecutionRuntime:
                         # Each phase is grounded in the arrived, measured pose.
                         standing = simulation.body_pose().copy()
                         _, standing_rotation = wrist_pose(simulation)
-                        constraints = phase_constraints(simulation, phase, duration, standing, standing_rotation)
+                        constraints = phase_constraints(simulation, phase, duration, standing, standing_rotation,
+                                                        wrist_offset=self.args.wrist_offset)
                     prompt = request.get("phase_prompts", {}).get(phase) or phase_prompt(
                         request["prompt"], phase, request["prompt_profile"])
                 else:
@@ -233,15 +329,17 @@ class ExecutionRuntime:
                 while simulation.data.time < end - 1e-8:
                     if evaluator:
                         simulation.command_fingers(RIGHT_CLOSED if phase in {"close", "lift", "hold"}
-                                                   else RIGHT_PRESHAPED if phase in {"reach", "lower"}
+                                                   else RIGHT_PRESHAPED if (phase in {"reach", "lower"}
+                                                        and self.args.hand_approach == "preshaped")
                                                    else {n: 0. for n in RIGHT_CLOSED})
                     self.tick(evaluator)
                     if evaluator and phase == "lower":
-                        alignment = hand_alignment(simulation)
+                        alignment = hand_alignment(simulation, self.args.acquisition_z_min)
                         if alignment["ready"]:
                             final["grasp_alignment"] = alignment
                             simulation.event("grasp_alignment_reached", **alignment)
-                            simulation.hold_measured_pose("grasp_alignment_reached")
+                            simulation.hold_measured_pose("grasp_alignment_reached",
+                                                          transition=self.args.acquisition_transition)
                             aligned = True
                             print("[ALIGN] Block entered the hand acquisition region. Holding pose and closing fingers.", flush=True)
                             break
@@ -268,15 +366,17 @@ class ExecutionRuntime:
                     else:
                         print("[PREPARE] Both feet stable after preparation. Starting reach.", flush=True)
                 if evaluator and phase == "lower" and not aligned:
-                    final["grasp_alignment"] = hand_alignment(simulation)
-                    raise SimulationStop("grasp_alignment_missed")
+                    final["grasp_alignment"] = hand_alignment(simulation, self.args.acquisition_z_min)
+                    aligned = self._replan_alignment(simulation, evaluator, request, output, final, phase_index)
+                    if not aligned:
+                        raise SimulationStop("grasp_alignment_missed")
                 if evaluator and phase == "close" and evaluator.opposing_contact_seconds < .1:
                     raise SimulationStop("grasp_not_acquired")
             if evaluator:
                 stage("hold")
                 evaluator.phase = "hold"
-                # The configured hold phase above is always recorded in full,
-                # including the tail after the two-second success threshold.
+                # Record the configured hold phase in full, including the tail
+                # after the two-second success threshold.
                 # If it did not succeed there, continue holding until the
                 # common 30-second timeout so a late success remains possible.
                 while simulation.data.time < 30 - 1e-8 and evaluator.success_time is None:

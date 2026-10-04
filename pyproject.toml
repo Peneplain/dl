@@ -14,7 +14,7 @@ stream = ["pyzmq>=25"]
 dev = ["ruff>=0.6"]
 
 [tool.setuptools.packages.find]
-include = ["baseline*"]
+include = ["baseline*", "risk_residual*", "experiments*"]
 
 [tool.ruff]
 line-length = 100

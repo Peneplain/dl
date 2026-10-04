@@ -7,7 +7,8 @@ by predictive risk and arm-reference residuals, entirely in G1 simulation.
 The full research scope is described in the [proposal source](docs/proposal.tex).
 
 [Run commands](docs/commands.md) · [Setup details](docs/baseline.md) · [Integration notes](docs/integration.md) ·
-[Verification](docs/verification.md) · [B0 grasp batches](docs/grasp.md)
+[Verification](docs/verification.md) · [B0 grasp batches](docs/grasp.md) ·
+[Learning status](docs/learning.md) · [Project context](docs/project_context.md)
 
 ## Architecture
 
@@ -165,36 +166,29 @@ The current pilot uses one task instruction with phase-specific text and simulat
 state grounding. Settle, close and hold preserve checked references. A measured
 hand/block alignment gate ends descent before finger closure; the shared
 controller then holds measured posture through frozen SONIC. Initial arms are
-parked behind the table. Default extra backoff is .45 m and final standoff .22 m.
+parked behind the table. Default extra backoff is .45 m and final standoff .20 m.
 The extra backoff applies only with `--walk`. Both hands, including palms and
 fingers, may contact the table; other robot-table contacts still stop the trial.
 Contact physics remains active and allowed hand-table contacts are counted.
-The complete three-second hold phase is recorded even after the two-second
+The complete five-second hold phase is recorded even after the two-second
 success threshold is reached, subject to failure stops and the 30-second timeout.
+The finger controller now uses stiffness 6 Nm/rad and damping .4 Nm s/rad,
+under the original joint and motor torque bounds. The shared tabletop solver
+uses elliptic friction cones, Newton, impedance ratio 10 and tolerance 1e-10
+to reduce soft-contact drift; friction coefficients and object mass are retained.
+Threshold achievement and retention at episode end are reported separately;
+a block lost after reaching the threshold is a failed trial.
+The default hand remains fully open during reach/lower, closes only after
+measured alignment, then uses a 4.8-second generated lift. The calibration
+protocol and evidence format are recorded in [verification.md](docs/verification.md).
 These are nominal rules shared by all future methods, not learned corrections.
 
-Two isolated ARDY–SONIC hand trials have physically lifted the block and held it
-for more than five continuous seconds, without prohibited contact. Both omitted
-walking, so **complete B0 success has not yet been established**. Complete pilots
-have passed walking/settling/preparation but still failed hand alignment or
-contact. The integrated state sequencer remains a calibration checkpoint.
-Risk/Residual learning remains planned. See
-[verification.md](docs/verification.md) for actual evidence and video links, and
-[prompts.md](docs/prompts.md) for prompt rationale.
-
-The direct-start calibration has since produced two additional grasp-and-lift
-successes in four attempts at a 0.20 m standoff; under the historical contact
-rules, the other two stopped on a right middle-finger/table collision.
-Those measurements predate the allowed hand-table contact rule.
-No grip-force change was needed, and no
-post-lift slipping was observed. These are manipulation-only pilots, not complete
-B0 results.
-
-Under the revised hand-table contact rule, two fresh manipulation pilots at
-0.20 m standoff (seeds 42 and 43) passed, with the complete three-second final
-hold recorded. Their rollouts last 17.18 s and 17.76 s. These exploratory runs
-verify the revised collector behavior; they are separate from the planned
-paired evaluation and the historical contact-policy results.
+The Risk/Residual model, dataset checks and synthetic training pipeline are
+implemented in separate packages, with an optional correction interface in
+the shared simulator. The observation builder, verified teacher dataset and P
+trial entry point remain unfinished; there are no measured P grasp results.
+See [learning.md](docs/learning.md) for exact scope. Experimental results and
+verification gaps are maintained in [verification.md](docs/verification.md).
 
 The baseline setup and inference scripts run independently of learning code.
 Learned corrections, training and data tooling belong in separate modules that
@@ -240,6 +234,9 @@ baseline/
   rendering.py      Offline MuJoCo camera RGB and MP4 rendering
 configs/
   baseline.lock.json
+  learning/p.json   Initial Risk/Residual training configuration
+experiments/        Synthetic check, training, calibration and statistics
+risk_residual/      Models, audited dataset, inference and checkpoints
 scripts/            Baseline installation, downloads, inference and checks
 docker/             MUSA container launcher
 tests/              Baseline provenance and packaging checks

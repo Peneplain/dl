@@ -1,0 +1,6 @@
+{
+  "model": {"history_steps": 16, "horizon": 8, "body_groups": 4, "token_dim": 32, "width": 256, "layers": 4, "heads": 8, "dropout": 0.1, "max_offset": 0.15},
+  "training": {"epochs": 30, "batch_size": 64, "learning_rate": 0.0001, "weight_decay": 0.01, "gradient_clip": 1.0, "correction_fraction": 0.5, "alpha": 1.0, "beta": 0.1, "auxiliary_weight": 1.0},
+  "risk_options": {"no_future": false, "no_history": false},
+  "status": "initial implementation defaults; calibrate limits and budgets on pilot/validation before experiments"
+}

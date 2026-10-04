@@ -18,7 +18,13 @@ TOP_FILES = {"AGENTS.md", "README.md", "run.sh", "Dockerfile.musa", ".gitignore"
              "scripts/prepare_deploy_motion.py",
              "scripts/render.py",
              "scripts/run_ardy.py", "scripts/ardy_service.py", "scripts/run.py", "scripts/smoke.py"}
-SOURCE_DIRS = {"baseline", "docker", "tests"}
+BASELINE_TESTS = {
+    "tests/__init__.py", "tests/test_baseline_bringup.py", "tests/test_deploy_motion.py",
+    "tests/test_grasp.py", "tests/test_reference_timing.py", "tests/test_rollout_rendering.py",
+    "tests/test_sessions.py", "tests/test_simulation.py", "tests/test_text_encoder.py",
+}
+TOP_FILES.update(BASELINE_TESTS)
+SOURCE_DIRS = {"baseline", "docker"}
 SUFFIXES = {".py", ".sh", ".yaml", ".yml", ".json", ".md", ".tex"}
 
 

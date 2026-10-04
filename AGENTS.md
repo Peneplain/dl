@@ -10,6 +10,11 @@ without changing recorded results or provenance.
 
 # Project specification
 
+At the start of a new chat in this repository, read `docs/project_context.md`
+for the latest project handoff, then inspect Git status and task-relevant files.
+After material changes, update that handoff with verified facts and remaining
+work. Keep secrets and raw chat transcripts out of the handoff.
+
 `docs/proposal.tex` is the source of truth for research scope, architecture,
 training and evaluation. `README.md` explains that design and the current
 implementation; keep it consistent with the proposal. Distinguish planned
