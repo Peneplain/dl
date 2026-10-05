@@ -103,3 +103,27 @@ private session text or restricted robot data.
 - The final server suite ran 98 tests with three optional RGB tests skipped;
   all remaining tests passed. Exact logs and code-only plan evidence are in
   `docs/verification.md`.
+
+## Acquisition repair handoff — 2026-10-05
+
+- The user-run `data-collection-261005-code-ready/batches/train-a` completed
+  60/60 attempts with zero successes: 52 timeouts, seven missing grasps and
+  one prohibited robot-table contact. All recorded acquisition positions were
+  near the old lower vertical gate boundary, -4.50 to -3.82 cm from the hand
+  center. Most fingers contacted the block's upper edge and lost it on lift.
+- `hand_alignment` now uses one-third of the block half extent vertically
+  (1 cm for this block), retaining the original lateral margins, controller,
+  motor limits, physics, success test and timeout. A matched three-seed pilot
+  with the final default code retained seed 10000 through a complete ten-second
+  hold; seeds 10001/10002 still failed acquisition/retention. This is a small
+  calibration result, not a validated batch success rate.
+- A separate terminal-rotation position-goal change failed its three physical
+  pilots and was withdrawn. Its source and reports remain in output. No new
+  IK, object attachment, policy training or large collection was performed.
+- Use the fresh plan `output/data-collection-261005-acquisition-fixed` and its
+  `commands.txt`. Earlier `code-ready` and `data-collection-261005-fixed` plans
+  have different baseline source hashes and must not resume with current code.
+  Preserve the old failed episodes and keep controller-version cohorts explicit.
+- The final suite ran 98 tests, with three optional RGB tests skipped and all
+  remaining tests passing. Three original failure videos and one successful
+  diagnostic video were rendered; see `docs/verification.md` for artifact paths.

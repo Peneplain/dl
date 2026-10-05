@@ -243,9 +243,10 @@ class GraspMetricTests(unittest.TestCase):
             sim, evaluator = self.fixture(directory)
             try:
                 wrist, rotation = wrist_pose(sim)
-                for local, expected in (([.13, .045, -.02], True),
+                for local, expected in (([.13, .045, -.005], True),
+                                        ([.13, .045, -.043], False),
                                         ([.13, .045, -.07], False),
-                                        ([.20, .045, -.02], False)):
+                                        ([.20, .045, -.005], False)):
                     sim.data.qpos[evaluator.block_q:evaluator.block_q + 3] = wrist + rotation @ local
                     result = hand_alignment(sim)
                     self.assertEqual(result["ready"], expected)

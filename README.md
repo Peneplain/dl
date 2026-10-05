@@ -181,6 +181,11 @@ a block lost after reaching the threshold is a failed trial.
 The default hand remains fully open during reach/lower, closes only after
 measured alignment, then uses a 4.8-second generated lift. The calibration
 protocol and evidence format are recorded in [verification.md](docs/verification.md).
+The acquisition gate requires the block center within one-third of its
+half-height of the measured hand center (1 cm for the 6 cm block). The October
+5 three-seed, ten-second-hold repair pilot retained one success; grasp stability
+remains under calibration. Create fresh collection plans after this source
+change; saved plans retain their original source hashes.
 These are nominal rules shared by all future methods, not learned corrections.
 
 The Risk/Residual model, dataset checks and synthetic training pipeline are

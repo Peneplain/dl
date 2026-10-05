@@ -834,3 +834,66 @@ when explicitly requested, while changed evidence and malformed streams still
 fail. Training refuses missing Risk classes or missing correction/identity
 categories in train or val before optimization. A real disjoint dataset,
 new physical pairs and the general corrective teacher remain unverified.
+
+## Premature acquisition repair — 2026-10-05
+
+The user collected `output/data-collection-261005-code-ready/batches/train-a`
+with the saved 60-episode B0 plan (seeds 10000--10059). All attempts completed;
+none succeeded. Reasons were 52 timeouts, seven `grasp_not_acquired` stops and
+one prohibited robot-table contact. The recorded acquisition wrist-frame Z
+ranged from -0.044987 to -0.038154 m, median -0.044182 m. The old lower gate
+was -0.045 m. Only one episode cleared 5 cm, for 0.87 s, below the required
+continuous two seconds. Task CSVs show contact during close followed by loss
+during lift and no opposing contact in terminal hold. These are genuine
+physical failures; reports and success criteria were preserved.
+
+`hand_alignment` now scales the vertical half-extent margin by one-third,
+instead of 1.5. For the 6 cm block, descent stops within 1 cm of the hand center
+instead of 4.5 cm. Lateral bounds, frozen models, finger commands/gains, torque
+limits, contact solver, free root/block, 5 cm/two-second success test, retention
+check and 30-second timeout are unchanged. The regression fixture rejects the
+observed premature -4.3 cm acquisition while accepting a centered block.
+
+Matched exploratory pilots used `--grasp --batch 3 --seed 10000
+--hold-seconds 10`, so all three compare the same train seeds and block poses:
+
+| Configuration | Run | Retained successes |
+| --- | --- | --- |
+| Original gate | Original train-a attempts 1--3 | 0/3 |
+| Original source, `--acquisition-z-min -.01` | `output/grasp-fix-261005-z01-pilot/batch-261005-225145` | 1/3 |
+| Tight gate plus terminal-rotation position-goal candidate | `output/grasp-fix-261005-final-pilot/batch-261005-225720` | 0/3 |
+| Final default tight gate, original position goals | `output/grasp-fix-261005-acquisition-pilot/batch-261005-230417` | 1/3 |
+
+The final seed-10000 trial cleared about 9.82 cm and held continuously for
+12.56 s, remaining held at the 25.28 s end after the full configured ten-second
+hold phase. Seed 10001 failed to acquire stable opposing contacts; seed 10002
+reached the success threshold but later lost the block, and remains a failure.
+The final 1/3 Wilson 95% interval is approximately [6.1%, 79.2%]. This pilot
+diagnoses a common premature-close failure, not held-out generalization or a
+reliable production success rate. More lateral alignment and retention
+calibration remain necessary. Test seeds were not used for calibration.
+
+The position-goal candidate was withdrawn after physical verification: it
+retained no successful grasp and one generated lower replan violated the
+left-knee limit by 0.070 rad. The original checker correctly rejected it;
+the limit was not relaxed. Candidate source is preserved at
+`output/grasp-fix-261005-rejected-source/grasp.py`. Failed pilot reports remain
+intact. No large batch or Risk/Residual training was launched during the repair.
+
+The final server suite passed 98 tests with three optional RGB tests skipped,
+log `output/grasp-fix-261005-acquisition-suite.log`. A fresh collection plan
+`output/data-collection-261005-acquisition-fixed` contains the same six prompt
+groups and 200 parent budget, pinned to the final source. It executed no physics.
+Its plan hash is
+`9c9195bfc3404159f80e04befc179ebd00ce02e6abbd7102f45b090268cbd8d9`.
+The older code-ready and withdrawn-candidate plans cannot resume against this
+source; do not edit them to bypass their provenance checks.
+
+Offline RGB/MP4 rendering passed for original train-a attempts 1, 20 and 5
+(376, 376 and 120 frames respectively, 640x480 at 12.5 FPS), and for the
+successful Z-bound diagnostic attempt 1 (317 frames). MP4s are under each
+attempt's `vision/video.mp4`; receipts are
+`train-a/render-261005-225456-895898.json` and
+`grasp-fix-261005-z01-pilot/batch-261005-225145/render-261005-230503-688081.json`
+under output. Videos show simulation time, not model-generation wall latency.
+They were copied to the user's local `outputs/grasp-fix-videos` for inspection.

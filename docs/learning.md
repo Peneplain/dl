@@ -206,6 +206,13 @@ model-lock, completed-attempt and interrupted-attempt checks. Planning does not
 run these commands. Do not change a saved plan to relabel a seed or move a
 completed parent between splits.
 
+After changing baseline code, create a fresh collection plan. Old plans pin
+the earlier source hashes and cannot resume with the repaired controller.
+Keep earlier failed episodes as evidence; do not overwrite their reports or
+reuse their output directories. The October 5 acquisition repair has a fresh
+plan at `output/data-collection-261005-acquisition-fixed`; its batch commands are in
+`commands.txt`. No large collection was started during the repair.
+
 ### 2. Index completed batches
 
 ```bash

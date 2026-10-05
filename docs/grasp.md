@@ -118,8 +118,11 @@ until the measured alignment gate passes, then uses the bounded closure targets.
 preshape for comparisons. The two approaches use the same geometry-derived
 acquisition gate, closure rate, motor limits and opposing-contact check. The gate
 is recomputed from the current MuJoCo wrist pose, the configured
-`task_grasp_center` site and the current block half extents, with a 1.5x extent
-margin. An optional `--acquisition-z-min` only tightens its lower wrist-frame
+`task_grasp_center` site and the current block half extents, with a 1.5x lateral
+margin and a one-third vertical margin (1 cm for the 6 cm block). The earlier
+1.5x vertical margin stopped descent with the block 4.5 cm below the hand
+center, allowing top-edge contact that was frequently lost during lift.
+An optional `--acquisition-z-min` only tightens its lower wrist-frame
 bound. The optional `--wrist-offset` is a calibration override for the nominal
 ARDY goal and is distinct from the physical gate.
 When descent misses the gate, up to the configured measured-state lower replans

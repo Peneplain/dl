@@ -80,9 +80,10 @@ def hand_alignment(simulation, z_min=None):
     center = grasp_center_local(simulation)
     geom = simulation.model.geom("task_block_geom").id
     half = np.asarray(simulation.model.geom_size[geom], dtype=float)
-    # The admissible volume follows the actual block size.  The extra half-size
-    # margin accounts for the opposing finger pads around the block center.
-    margin = 1.5 * half
+    # Lateral margins allow opposing pads to surround the block. Vertically,
+    # require the block near the grasp center before stopping descent: the old
+    # 1.5x margin closed on the top edge and lost contact during lift.
+    margin = half * np.array([1.5, 1.5, 1. / 3.])
     lower = center - margin
     upper = center + margin
     if z_min is not None:
