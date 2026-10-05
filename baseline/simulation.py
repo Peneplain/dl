@@ -38,6 +38,8 @@ class SonicSimulation:
         self.trajectory = None
         self.context_file = None
         self.context = None
+        self.effective_context_file = None
+        self.effective_context = None
         self.task_phase = "stand"
         self.recording = None
         self.viewer = None
@@ -142,6 +144,10 @@ class SonicSimulation:
         context_header += [f"nominal_quat:{i:02d}:{axis}" for i in range(self.policy.future_count)
                            for axis in ("w", "x", "y", "z")]
         self.context.writerow(context_header)
+        if self.correction_provider is not None:
+            self.effective_context_file = (self.output / "effective_context.csv").open("x", buffering=1)
+            self.effective_context = csv.writer(self.effective_context_file)
+            self.effective_context.writerow(context_header)
         self.started = time.perf_counter()
         self.latencies = []
         self.tracking_errors = []
@@ -168,6 +174,10 @@ class SonicSimulation:
             self.context_file.close()
             self.context_file = None
             self.context = None
+        if self.effective_context_file is not None:
+            self.effective_context_file.close()
+            self.effective_context_file = None
+            self.effective_context = None
         self.output = None
 
     def sync_viewer(self):
@@ -344,7 +354,10 @@ class SonicSimulation:
         model-independent; both files share ``sim_time`` and ``frame_index``.
         Future executed states are never written as nominal inputs.
         """
-        if self.context is None:
+        self._write_context(self.context, positions, velocities, quaternions)
+
+    def _write_context(self, writer, positions, velocities, quaternions):
+        if writer is None:
             return
         root = self.data.qpos[self.root_q:self.root_q + 7]
         root_velocity = self.data.qvel[self.root_v:self.root_v + 6]
@@ -354,7 +367,7 @@ class SonicSimulation:
                *self.data.qpos[self.q_indices], *self.data.qvel[self.v_indices],
                *self.finger_target, *offsets, *positions.reshape(-1),
                *velocities.reshape(-1), *quaternions.reshape(-1)]
-        self.context.writerow(row)
+        writer.writerow(row)
 
     def command_fingers(self, targets, max_rate=2.5):
         """Named hand commands under a shared radians/second rate limit."""
@@ -384,6 +397,7 @@ class SonicSimulation:
                             self.data.qvel[self.root_v + 3:self.root_v + 6].copy())
         p, v, q = self.lookahead()
         self._write_nominal_context(*getattr(self, "_nominal_lookahead", (p, v, q)))
+        self._write_context(self.effective_context, p, v, q)
         inference = time.perf_counter()
         target, action = self.policy.act(p, v, q, quat)
         self.latencies.append((time.perf_counter() - inference) * 1000)

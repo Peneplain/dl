@@ -208,9 +208,11 @@ B0 rollout already executes through SONIC. A future separate teacher generator
 must verify its corrections through SONIC from the same perturbed state.
 
 `expert_valid` remains false. These attempts are physical B0 records, not a
-verified teacher training dataset. Controller-history snapshots for branching,
-parent episode splits, teacher correction verification, export and training
-manifests remain planned. RGB is output only, not an inference observation.
+verified teacher training dataset. A separate paired pilot can replay a saved
+ARDY reference from reset and check an equal controller/physics fingerprint at
+one arm perturbation decision. It cannot branch arbitrarily after divergence.
+General controller-history checkpoint restoration and teacher recovery remain
+planned. RGB is output only, not an inference observation.
 
 The four-run paired prompt pilot still had no successes; see
 [verification.md](verification.md). Prompt settings, hand geometry and contact
@@ -277,4 +279,6 @@ corrections must succeed through frozen SONIC from the same perturbed state;
 otherwise retain risk supervision only. Split parent episodes before windows,
 then use matched prompts, scene/ARDY seeds and disturbances, the proposal's
 20 paired episodes per core condition, Wilson intervals and paired bootstrap
-comparisons. Learning, teacher branching and this full evaluation remain planned.
+comparisons. General teacher branching and this full evaluation remain planned;
+the paired clean-versus-arm-perturbed pilot is described in
+[learning.md](learning.md).

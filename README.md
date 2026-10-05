@@ -185,8 +185,11 @@ These are nominal rules shared by all future methods, not learned corrections.
 
 The Risk/Residual model, dataset checks and synthetic training pipeline are
 implemented in separate packages, with an optional correction interface in
-the shared simulator. The observation builder, verified teacher dataset and P
-trial entry point remain unfinished; there are no measured P grasp results.
+the shared simulator. A rollout-to-window converter and controlled paired
+teacher pilot have been added. One pilot pair passed physical/controller-state
+matching and a single-parent window audit. General teacher recovery and the P
+trial entry point remain unfinished; there is no full training dataset or
+measured P grasp result.
 See [learning.md](docs/learning.md) for exact scope. Experimental results and
 verification gaps are maintained in [verification.md](docs/verification.md).
 

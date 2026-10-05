@@ -34,11 +34,15 @@ same split. Hold out complete scene seeds and prompt paraphrase groups. Store
 the manifest hash, source report/task/context hashes, time bounds, and label
 availability mask with each extracted window.
 
-Nominal risk labels come from the nominal future execution. A counterfactual
-branch starts from an exact saved simulator/controller checkpoint and restores
-SONIC history, reference buffers, finger state, contact solver warm start and
-disturbance RNG. Corrected outcomes never replace nominal risk labels. Failed
-teacher recoveries supervise Risk only; they do not become Residual targets.
+Nominal risk labels come from the nominal future execution. The first paired
+pilot replays two episodes from the same reset and verifies a matching
+physical/controller-state fingerprint immediately before the controlled arm
+perturbation. This supports one same-decision clean/perturbed comparison.
+General branching from an arbitrary saved decision still requires explicit
+restoration of SONIC history, reference buffers, finger state, contact solver
+warm start and disturbance RNG; the pilot does not claim this capability.
+Corrected outcomes never replace nominal risk labels. Failed clean teacher
+branches supervise Risk only; they do not become Residual targets.
 
 ## Model and executor boundary
 

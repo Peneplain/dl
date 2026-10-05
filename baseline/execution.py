@@ -18,9 +18,10 @@ from baseline.simulation import SimulationStop, SonicSimulation
 class ExecutionRuntime:
     """Reuse models and an optional viewer; reset all episode state per attempt."""
 
-    def __init__(self, args, session):
+    def __init__(self, args, session, *, correction_provider=None):
         self.args = args
         self.session = Path(session)
+        self.correction_provider = correction_provider
         self.policy = None
         self.service = None
         self.simulation = None
@@ -47,6 +48,7 @@ class ExecutionRuntime:
             self.simulation = SonicSimulation(self.args.assets, self.args.sonic_repo, None,
                                              policy=self.policy, scene=scene, gui=self.args.gui,
                                              finger_kp=self.args.finger_kp, finger_kd=self.args.finger_kd,
+                                             correction_provider=self.correction_provider,
                                              initial_body_reference=initial_body_reference(
                                                  self.policy.parameters.default) if self.args.grasp else None)
         return self.simulation
@@ -69,6 +71,7 @@ class ExecutionRuntime:
         self.simulation = SonicSimulation(
             self.args.assets, self.args.sonic_repo, None, policy=self.policy,
             scene=scene, gui=self.args.gui,
+            correction_provider=self.correction_provider,
             finger_kp=self.args.finger_kp, finger_kd=self.args.finger_kd,
             initial_body_reference=initial_body_reference(self.policy.parameters.default))
         return self.simulation
@@ -189,7 +192,8 @@ class ExecutionRuntime:
     def run(self, request, output, plan_hash):
         started = time.perf_counter()
         self.model_load_failed = False
-        final = {"schema_version": 2, "method": "B0", "status": "running", "stage": "initializing",
+        method = "B0" if self.correction_provider is None else "reference_correction_pilot"
+        final = {"schema_version": 2, "method": method, "status": "running", "stage": "initializing",
                  "request": request, "plan_sha256": plan_hash, "command": sys.argv,
                  "physics_executed": False, "sonic_executed": False,
                  "task_success": False if self.args.grasp else None,

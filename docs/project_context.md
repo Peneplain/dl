@@ -32,13 +32,19 @@ private session text or restricted robot data.
   replace these with older local `baseline/` files.
 - `risk_residual/`, `experiments/` and `configs/learning/` provide a versioned
   learning schema, models, losses, dataset checks, synthetic two-stage training
-  check and optional correction provider. See `docs/learning.md` for scope.
-  The collector, verified teacher, observation builder and P trial entry point
-  remain future work.
+  check and optional correction provider. A controlled paired-teacher pilot
+  and rollout-to-window converter passed one same-state simulation pair and
+  single-parent loader audit; see `docs/learning.md` and `docs/verification.md`.
+  A disjoint train/validation/test dataset, arbitrary mid-episode branching,
+  general teacher recovery and the P trial entry point remain future work.
 - The October 5 merge passed 78 server tests, pinned-asset/MUSA operator checks,
   baseline reference smoke and reduced-width synthetic Risk/Residual training
   on MUSA. An unprompted two-second B0 episode executed 100 SONIC frames in
   MuJoCo. These checks do not measure P grasp success.
+- The paired-teacher/data-conversion update passed 84 server tests, a new
+  baseline reference smoke, one matched successful-clean/failed-perturbed
+  simulation pair, and a single-parent loader audit. The available prompt
+  groups do not support a leakage-free three-split dataset yet.
 - Real weights, large outputs, environments and upstream source checkouts stay
   outside Git. Use `output/` for fresh experiment artifacts.
 

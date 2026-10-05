@@ -727,3 +727,57 @@ An actual unprompted B0 standing episode also completed after the merge:
 loading, 100 SONIC control frames, 2.00 s of MuJoCo physics, and no task
 success value because no grasp task was requested. The separate scene helper
 completed against the pinned SONIC assets (`output/merge-261005-scene.log`).
+
+## Paired teacher and rollout conversion pilot — 2026-10-05
+
+The first data collector replays saved ARDY references from a successful B0
+attempt through two full SONIC/MuJoCo episodes. It changes one bounded arm
+reference only in the perturbed nominal branch. A fingerprint of MuJoCo's
+integration state, SONIC history, reference buffer, planned reference and
+offset limiter at the activation decision must match before a pair is accepted.
+The scene XML and compiled model hashes must also match. This is a verified
+replay from reset, not an arbitrary mid-episode checkpoint restore.
+
+The source attempt was
+`output/grasp-review-261003-IR6tcT/paired20/open-seed-012`. The first pilot,
+`output/teacher-pair-261005-pilot-01`, used a 0.10 rad right-wrist-pitch
+offset during `lower`. The state pair matched and both branches succeeded;
+therefore it is not evidence of needed corrective intervention. This run used
+the initial collector version before the explicit `recovery_verified` field.
+
+The second pilot,
+`output/teacher-pair-261005-pilot-02/pair.json`, used a 0.15 rad
+right-shoulder-pitch offset after 0.2 s in `lower`. The activation states and
+physics models matched. The clean branch completed the task; the perturbed
+branch timed out after a maximum continuous hold of 1.875 s, below the 2 s
+success criterion. Its maximum block clearance was 0.1228 m. The pair reports
+`pair_state_verified=true`, `teacher_verified=true` and
+`recovery_verified=true`. These are two exploratory runs from one source seed,
+not a success-rate estimate or a test of the learned P controller.
+These existing branch reports retain the executor's old `method=B0` tag;
+`pair.json` and `effective_context.csv` identify the actual injected reference
+offset. Subsequent provider runs use `method=reference_correction_pilot`.
+
+The single-parent source plan is
+`output/teacher-pilot-source-plan-261005.json`. Running
+`experiments.build_dataset --inspect-only` loads both executed branches,
+restores recorded pre-decision MuJoCo states, builds 16-step history and
+eight-step future windows, and validates the generated arrays through the
+production `WindowDataset` loader in a temporary directory. With exploratory
+tracking thresholds `[.06, .06, .1, .1]` rad, the pilot had 524 windows,
+494 positive-risk labels, one recoverable correction sample and 10 stable
+zero-offset samples. With `[.02, .02, .1, .1]`, all 524 windows were positive
+and no stable sample remained. These values show threshold sensitivity; no
+threshold has been calibrated or frozen. No persistent train/validation/test
+dataset was written. Existing recorded attempts with complete context use one
+exact instruction identity, so they cannot form disjoint prompt groups across
+all three splits without new collection.
+
+After the final recovery and clean-identity changes, `./run.sh tests` passed
+all **84 tests**, including the GL rendering fixtures; the log is
+`output/teacher-pair-261005-tests.log`. The baseline reference smoke passed
+at `output/teacher-pair-261005-reference-smoke/report.json`. Its inputs are
+synthetic and its report correctly records that no physics was executed. The
+physical pair and single-parent loader audit above supply the separate
+measured evidence for this data collector. Full split conversion and learned
+P deployment remain unverified.
