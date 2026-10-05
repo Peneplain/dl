@@ -291,7 +291,13 @@ def extract_parent(parent, thresholds, *, context_file=None):
                     lost[h, 1] = float(not opposing_contact[contact_index])
         labels = nominal_risk_labels(track, lost, balance, valid, required.astype(bool), thresholds)
         correction = bool(pair and row["frame"] == activation_frame and
-                          pair["recovery_verified"] and labels["intervention_target"])
+                          pair["recovery_verified"])
+        if correction:
+            # A matched clean-success / perturbed-failure outcome directly
+            # supervises intervention need at this decision. The auxiliary
+            # future labels still come only from nominal execution.
+            labels["intervention_target"] = np.float32(1.)
+            labels["intervention_valid"] = np.bool_(True)
         offset = np.zeros((8, 29), dtype=np.float32)
         residual_valid = np.zeros(8, dtype=bool)
         if correction:

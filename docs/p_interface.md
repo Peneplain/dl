@@ -41,8 +41,11 @@ perturbation. This supports one same-decision clean/perturbed comparison.
 General branching from an arbitrary saved decision still requires explicit
 restoration of SONIC history, reference buffers, finger state, contact solver
 warm start and disturbance RNG; the pilot does not claim this capability.
-Corrected outcomes never replace nominal risk labels. Failed clean teacher
-branches supervise Risk only; they do not become Residual targets.
+Corrected outcomes never replace nominal future tracking, contact or balance
+labels. A matched clean-success/perturbed-failure pair provides a separate
+positive intervention-needed label at its activation decision. Failed clean
+teacher branches supervise nominal Risk only; they do not become Residual
+targets.
 
 ## Model and executor boundary
 

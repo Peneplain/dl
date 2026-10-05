@@ -84,9 +84,11 @@ the intervention frame and a fingerprint of the physical state, SONIC history,
 reference buffer and correction limiter immediately before the offset. A pair
 is usable only when the fingerprints match. `teacher_verified` records clean
 task success. `recovery_verified` additionally requires the perturbed nominal
-branch to fail in an otherwise valid physics/SONIC trial. A correction target
-requires that recovery evidence and a positive nominal future risk label at
-the matching intervention decision. The clean branch is also converted as an
+branch to fail in an otherwise valid physics/SONIC trial. At the matching
+decision, that verified outcome supplies a direct positive intervention label
+and an arm-only correction target, even if the short nominal future does not
+cross an auxiliary tracking/contact/balance threshold. Auxiliary targets still
+come only from nominal execution. The clean branch is also converted as an
 independent nominal rollout under the same parent split, providing stable
 zero-offset identity windows when its future remains low risk. If both branches
 succeed, the pair can provide Risk and stable identity windows but no recovery

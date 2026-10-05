@@ -357,8 +357,12 @@ phase-dependent contact loss, and instability; a pooled head gives $p_t$:
 \lambda_b\mathcal L_{\mathrm{balance}}+
 \lambda_i\mathcal L_{\mathrm{intervene}}.
 \]
-Intervention labels mark threshold violations during nominal future execution;
-thresholds are validated then fixed. Open-hand phases are not grasp failures.
+Intervention labels mark threshold violations during nominal future execution
+or a verified same-state intervention whose perturbed nominal branch fails and
+whose clean teacher branch succeeds. The latter is a direct intervention-needed
+label; it does not replace nominal tracking/contact/balance targets with
+corrected outcomes. Thresholds are validated then fixed. Open-hand phases are
+not grasp failures.
 Losses mask unavailable future steps. High risk indicates possible failure,
 not a guarantee that an arm correction can recover it.
 

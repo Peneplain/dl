@@ -146,6 +146,19 @@ class LearningTests(unittest.TestCase):
         self.assertTrue(labels['intervention_valid'])
         self.assertEqual(labels['intervention_target'], 1)
 
+    def test_verified_recovery_is_positive_without_auxiliary_threshold_violation(self):
+        path = self.manifest.parent / 'train.npz'
+        arrays = {key: value.copy() for key, value in self.data.arrays.items()}
+        index = int(np.flatnonzero(arrays['correction_sample'])[0])
+        for key in ('track_target', 'contact_target', 'balance_target'):
+            arrays[key][index] = 0
+        np.savez(path, **arrays)
+        WindowDataset(self.manifest, 'train', self.config)
+        arrays['intervention_target'][index] = 0
+        np.savez(path, **arrays)
+        with self.assertRaisesRegex(ValueError, 'verified recovery'):
+            WindowDataset(self.manifest, 'train', self.config)
+
     def test_baseline_archive_excludes_new_learning_modules_and_tests(self):
         root = Path(__file__).resolve().parents[1]
         files = {str(path.relative_to(root)) for path in source_files(root)}

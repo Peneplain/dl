@@ -144,11 +144,14 @@ class WindowDataset(Dataset):
                 raise ValueError(f"Probability target outside [0,1]: {key}")
         violations = valid & ((a["track_target"] >= 1) | (a["balance_target"] > .5)
                               | (a["contact_mask"] & (a["contact_target"] > .5)))
-        positive = violations.any((1, 2))
+        # Verified same-state recovery is an independent intervention-needed
+        # label, even when short-horizon tracking/contact proxies stay below
+        # their thresholds. Auxiliary risk heads remain nominal-only.
+        positive = violations.any((1, 2)) | correction
         expected_valid = positive | valid.all((1, 2))
         if (not np.array_equal(expected_valid, a["intervention_valid"])
                 or np.any(a["intervention_target"][expected_valid] != positive[expected_valid])):
-            raise ValueError("Intervention labels must reflect observed nominal threshold violations; mask censored negatives")
+            raise ValueError("Intervention labels must reflect nominal violations or verified recovery; mask censored negatives")
         if np.any(stable & (~valid.all((1, 2)) | positive)):
             raise ValueError("Stable identity samples require a complete stable nominal future")
         selected = correction | stable
