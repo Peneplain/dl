@@ -210,8 +210,14 @@ After changing baseline code, create a fresh collection plan. Old plans pin
 the earlier source hashes and cannot resume with the repaired controller.
 Keep earlier failed episodes as evidence; do not overwrite their reports or
 reuse their output directories. The October 5 acquisition repair has a fresh
-plan at `output/data-collection-261005-acquisition-fixed`; its batch commands are in
+plan at `output/data-collection-261005` (renamed on October 6); its batch commands are in
 `commands.txt`. No large collection was started during the repair.
+
+The user subsequently completed all 200 planned episodes. The October 6
+relocation retained the original collection and parent plan hashes, updated
+`commands.txt`, and recorded the path change in `relocation.json`. Original
+reports retain their execution-time paths. Use the current parent directories
+and the relocated collection plan for indexing and teacher collection.
 
 ### 2. Index completed batches
 

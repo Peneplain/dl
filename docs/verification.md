@@ -897,3 +897,53 @@ attempt's `vision/video.mp4`; receipts are
 `grasp-fix-261005-z01-pilot/batch-261005-225145/render-261005-230503-688081.json`
 under output. Videos show simulation time, not model-generation wall latency.
 They were copied to the user's local `outputs/grasp-fix-videos` for inspection.
+
+## Completed 200-parent collection and cleanup — 2026-10-06
+
+The user completed the six fixed B0 plans with the acquisition repair. Before
+cleanup, all six summaries were `complete` with no pending attempts:
+
+| Group | Completed | Retained successes | Success rate |
+| --- | --- | --- | --- |
+| train-a | 60 | 23 | 38.3% |
+| train-b | 60 | 19 | 31.7% |
+| val-a | 20 | 10 | 50.0% |
+| val-b | 20 | 3 | 15.0% |
+| test-a | 20 | 9 | 45.0% |
+| test-b | 20 | 5 | 25.0% |
+| Total | 200 | 69 | 34.5% |
+
+These are trajectory collection results, not learned-model training or
+evaluation. No `manifest.json`, `sources.json`, `pair.json` or `.pt`/`.pth`/`.ckpt`
+learning artifact was present in output at inspection. Keep failed episodes
+alongside successes for Risk supervision and retain the fixed parent splits.
+
+At the user's explicit request, the completed directory was renamed from
+`data-collection-261005-acquisition-fixed` to `data-collection-261005` under
+output. Relative collection group paths and all immutable episode/plan files
+were retained. Before/after move file inventories matched, and the collection
+plan SHA-256 was unchanged. `commands.txt` was updated to the new absolute
+directory; `relocation.json` records the mapping without rewriting historical
+report paths or measurements. No collection, model inference or training was
+started during cleanup.
+
+The protected `batch-261003-122608` retains all 20 attempts and all 20 MP4s.
+Both manual video sessions were retained as unique user artifacts. Protected
+video SHA-256 values matched after deletion of the obsolete source plans,
+repair pilots, smoke artifacts and temporary logs. The deletion freed
+9,529,565,184 allocated bytes. Compact reports, original configurations and
+the rejected candidate source were saved under
+`/home/group3/dl-output-history/cleanup-261006/reports` first. The sibling
+`cleanup-receipt.json` lists every removed top-level item and protected video
+hash. Historical links to removed output reports now refer to this archive;
+raw old rollouts were deleted, and the separate storage-migration backup was
+outside the scope of this cleanup.
+
+The relocated collection passed `experiments.plan_data index`, producing
+`output/data-collection-261005/index/report.json` and `sources.json`. It checked
+source output hashes and fixed split ownership: 200 planned parents, 196
+candidates, 69 teacher candidates, zero pending and four unusable execution
+failures. The log is
+`/home/group3/dl-output-history/cleanup-261006/index-check.log`. Indexing loaded
+no policy and ran no physics; it did not write learning windows or establish
+Residual supervision readiness.

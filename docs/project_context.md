@@ -127,3 +127,31 @@ private session text or restricted robot data.
 - The final suite ran 98 tests, with three optional RGB tests skipped and all
   remaining tests passing. Three original failure videos and one successful
   diagnostic video were rendered; see `docs/verification.md` for artifact paths.
+
+## Completed collection and output cleanup — 2026-10-06
+
+- All six user-run groups completed: train-a 23/60, train-b 19/60, val-a 10/20,
+  val-b 3/20, test-a 9/20 and test-b 5/20 retained successes, totaling 69/200.
+  These are B0 collection outcomes, not trained Risk/Residual performance.
+  No learning dataset manifest, teacher-pair proof or training checkpoint was
+  present in output when inspected.
+- The user requested renaming the completed collection to
+  `output/data-collection-261005`. All episode files and plan hashes were
+  preserved. `commands.txt` uses the new path; `relocation.json` records the
+  original location. Load episodes from their current parent directories;
+  historical reports still record their original execution-time paths.
+- The relocated `index/` passed the source-evidence and split audit: 200
+  planned parents, 196 candidates, 69 teacher candidates, zero pending and four
+  unusable execution failures. Window eligibility, paired recovery and training
+  readiness still require the later converter/teacher steps.
+- Output retains that collection, `batch-261003-122608` (all 20 attempt videos)
+  and both `manual-261005-152355` and `manual-261005-155455` video sessions.
+  Protected video SHA-256 values were checked after cleanup.
+- Obsolete plans, repair pilots, smoke artifacts and temporary logs were
+  removed at the user's request, freeing 9,529,565,184 allocated bytes. Their
+  compact reports/configurations are under
+  `/home/group3/dl-output-history/cleanup-261006/reports`, with the explicit
+  deletion list and video hashes in the sibling `cleanup-receipt.json`.
+  Historical verification links into removed directories refer to those
+  archived reports. Raw removed rollouts were not archived. The separate
+  original storage-migration backup was outside this cleanup request.
