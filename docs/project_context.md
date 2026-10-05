@@ -75,3 +75,31 @@ private session text or restricted robot data.
   optional RGB tests skipped). This storage change collected no new episodes.
   A leakage-free train/validation/test dataset and general corrective teacher
   remain outstanding.
+
+## Data tooling handoff — 2026-10-05
+
+- `experiments.plan_data plan` creates immutable B0 batch plans with prompt
+  groups and scene seeds assigned to train/val/test before collection. The
+  proposed `configs/data/collection.json` budgets 120/40/40 episodes in six
+  authored prompt groups. No prompt-performance result is claimed.
+- The code-only plan at `output/data-collection-261005-code-ready` contains
+  `collection-plan.json`, generated prompts and six commands in `commands.txt`.
+  No batch command was executed while preparing it. Run those commands from
+  the host when ready; indexing and teacher collection are separate commands.
+- `experiments.plan_data index` validates completed B0 batches and writes source
+  candidates plus explicit pending/unusable reasons. `experiments.collect_pairs`
+  schedules bounded saved-reference pairs from successes and supports resume
+  without silently retrying completed failures. All variants retain the parent
+  split. General recovery of naturally failed states remains unimplemented.
+- The converter supports `--skip-ineligible` and supervision readiness reports.
+  It still rejects corruption and changed provenance. `experiments.audit_dataset`
+  counts valid positive/negative/censored Risk labels, correction/stable samples,
+  contributing parents and phases. Training requires both Risk classes or both
+  Residual supervision categories in train and val. See `docs/learning.md` for
+  the complete command sequence and current limitations.
+- The offline baseline asset check passed with the installed S4000 stack; these
+  tools need no new packages or model downloads. Tests use temporary fixtures
+  and mocked pair execution; they do not establish a new physical recovery rate.
+- The final server suite ran 98 tests with three optional RGB tests skipped;
+  all remaining tests passed. Exact logs and code-only plan evidence are in
+  `docs/verification.md`.

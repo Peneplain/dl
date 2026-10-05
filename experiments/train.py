@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 from baseline.common import LOCK, ROOT, sha256, write_json
 from baseline.runtime import device_for, synchronize
 from risk_residual.checkpoints import load_checkpoint
+from risk_residual.audit import require_ready, supervision_summary
 from risk_residual.config import SCHEMA, ModelConfig
 from risk_residual.data import Normalizer, WindowDataset
 from risk_residual.losses import residual_loss, risk_loss
@@ -58,6 +59,8 @@ def train(args):
         torch.musa.manual_seed_all(args.seed)
     train_data = WindowDataset(args.data, "train", config)
     val_data = WindowDataset(args.data, "val", config)
+    require_ready({"train": supervision_summary(train_data.arrays),
+                   "val": supervision_summary(val_data.arrays)}, args.stage)
     if train_data.manifest.get("synthetic_inputs", False) and not args.allow_synthetic:
         raise ValueError("Synthetic fixtures require explicit --allow-synthetic")
     if train_data.manifest["provenance"]["baseline_lock_sha256"] != sha256(LOCK):

@@ -1,0 +1,26 @@
+{
+  "scope": "Controlled arm-reference perturbations; not a general failure-recovery teacher.",
+  "perturbations": [
+    {
+      "id": "lower-shoulder-p15",
+      "phase": "lower",
+      "delay": 0.2,
+      "joint": "right_shoulder_pitch_joint",
+      "amplitude": 0.15
+    },
+    {
+      "id": "lower-shoulder-n15",
+      "phase": "lower",
+      "delay": 0.2,
+      "joint": "right_shoulder_pitch_joint",
+      "amplitude": -0.15
+    },
+    {
+      "id": "lift-elbow-p10",
+      "phase": "lift",
+      "delay": 0.2,
+      "joint": "right_elbow_joint",
+      "amplitude": 0.1
+    }
+  ]
+}

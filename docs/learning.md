@@ -23,6 +23,9 @@ that the proposed controller improves a physical grasp. Settings in
 | `risk_residual/teacher.py` | Bounded arm perturbation and activation-state fingerprint |
 | `experiments/collect_pair.py` | Two-branch, saved-reference teacher collection pilot |
 | `experiments/build_dataset.py` | Audited nominal rollout to versioned NPZ windows |
+| `experiments/plan_data.py` | Fixed split planning and indexing existing B0 batches |
+| `experiments/collect_pairs.py` | Resumable multi-source controlled pair collection |
+| `experiments/audit_dataset.py` | Per-split supervision counts and readiness checks |
 
 Risk uses 16 execution samples at 50 Hz, spanning 300 ms, and eight nominal
 samples 40 ms apart, spanning 0–280 ms. The latter is distinct from SONIC's
@@ -53,8 +56,11 @@ future negative labels are masked. Normalization is fitted on training inputs
 only. Synthetic fixtures carry `synthetic_inputs=true` and cannot be loaded as
 task checkpoints by the production loader.
 
-The first rollout-to-window converter and controlled paired-teacher pilot are
-implemented and have been checked on one real simulation pair. A full
+The rollout-to-window converter and controlled paired-teacher pilot are
+implemented and have been checked on one real simulation pair. Batch planning,
+indexing, resumable pairing and supervision audits are implemented separately
+from B0. These tools do not establish that new prompt groups or perturbations
+produce successful physical trials. A full
 train/validation/test dataset has not been collected. Arbitrary mid-episode
 checkpoint restoration, a general corrective teacher, and the P evaluation
 entry point remain unimplemented.
@@ -167,6 +173,143 @@ thresholds, source file hashes and decision-time bounds. The converter loads
 all three splits through `WindowDataset` before reporting success. Review
 `correction_samples` and `stable_samples` in `report.json` before training;
 the existence of an NPZ file alone does not establish usable correction data.
+
+## Batch data workflow
+
+The commands below run from `/home/group3/dl` on the host. Planning, indexing,
+inspection and auditing load no policy and execute no physics. Pair collection
+executes two physical/controller branches for each selected source and variant;
+invoke it only when ready to collect. The tools use existing Python dependencies
+and local frozen assets; they do not download models. Run the existing offline
+asset check before collection when asset availability is uncertain.
+
+### 1. Fix splits before collection
+
+```bash
+MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh \
+  python -m experiments.plan_data plan \
+  --config configs/data/collection.json --out output/data-collection-NEW
+```
+
+The proposed configuration contains 200 parent episodes: 120 train, 40 val and
+40 test, in six explicitly authored English phase-prompt groups. Seed ranges
+are 10000--10059 and 11000--11059 for train, 20000--20019 and 21000--21019 for
+val, and 30000--30019 and 31000--31019 for test. The physical settings use the
+current no-walk .20 m standoff and a 10-second final hold. This is a collection
+plan, not a measured dataset or a validated prompt-performance claim. Review
+the generated `prompts/` and pilot the groups before a large collection.
+
+The planner writes `collection-plan.json`, standard `batches/<group>/plan.json`
+files and `commands.txt`. Run the individual `./run.sh batch --resume ...`
+commands in that file yourself. They retain the existing B0 runner's source,
+model-lock, completed-attempt and interrupted-attempt checks. Planning does not
+run these commands. Do not change a saved plan to relabel a seed or move a
+completed parent between splits.
+
+### 2. Index completed batches
+
+```bash
+MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh \
+  python -m experiments.plan_data index \
+  --collection output/data-collection-NEW/collection-plan.json \
+  --out output/data-index-NEW
+```
+
+`sources.json` contains candidate original episodes. `report.json` lists pending,
+too-short, incomplete, unsupported and invalid-execution attempts. Stopped
+grasp failures with valid physics/SONIC and enough history remain Risk candidates.
+The index verifies recorded evidence hashes and exact requests. It audits all
+planned seeds and prompt groups, including pending attempts. Successful
+episodes are marked as teacher candidates, not automatically as correction data.
+
+Existing ordinary B0 batches can instead be assigned before window extraction
+with a JSON file passed as `--batches`:
+
+```json
+{"batches":[
+  {"run":"output/BATCH-A","split":"train","prompt_group":"train-a"},
+  {"run":"output/BATCH-B","split":"val","prompt_group":"val-a"},
+  {"run":"output/BATCH-C","split":"test","prompt_group":"test-a"}
+]}
+```
+
+The runs must have distinct held-out seed and prompt groups. The tool compares
+the effective phase instructions after filling implicit baseline defaults and
+normalizing whitespace/case. Explicitly writing the default text, renaming a
+group, or reformatting its JSON cannot bypass instruction leakage checks.
+Semantic paraphrase-family assignment still needs review; string comparison
+cannot prove semantic independence. A single default-prompt batch can be
+adopted as train and supplemented by separate held-out groups.
+
+### 3. Collect verified controlled pairs from successes
+
+```bash
+MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh \
+  python -m experiments.collect_pairs --sources output/data-index-NEW/sources.json \
+  --out output/teacher-pairs-NEW --limit 3
+
+# Continue exactly the saved source/reference/perturbation plan.
+MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh \
+  python -m experiments.collect_pairs --sources output/data-index-NEW/sources.json \
+  --out output/teacher-pairs-NEW --resume --limit 20
+```
+
+`configs/data/perturbations.json` proposes bounded positive/negative right-shoulder
+offsets during lower and a right-elbow offset during lift. Each successful
+source is replayed clean and perturbed with its saved ARDY references. Resume
+requires unchanged source reports, reference hashes, settings, collector and
+baseline sources. Completed failures are recorded and are not silently retried
+until success; an interrupted attempt is preserved before a new attempt is made.
+`--limit` caps newly attempted pairs in this invocation. A lock prevents concurrent
+processes from writing the same pair queue.
+
+The output `sources.json` preserves each parent's split and replaces eligible
+originals with their verified paired branches; the converter includes their
+clean identity windows. Sources without a valid pair remain original Risk
+candidates. `report.json` lists recovery counts, failed/unpaired/invalid jobs,
+pending jobs and error messages. Both-success pairs supply no recovery target.
+A missing saved replan reference or a mismatched activation cannot be repaired
+by inventing a teacher action. Failed pair outputs remain available for diagnosis.
+
+This is controlled corruption supervision: the clean frozen baseline supplies
+the teacher reference before nominal divergence. General recovery of natural
+failures from arbitrary saved states still requires simulator/controller/RNG
+restoration and a separate verified corrective teacher. The batch wrapper does
+not implement or claim that capability.
+
+### 4. Convert and check supervision
+
+```bash
+MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh \
+  python -m experiments.build_dataset --sources output/teacher-pairs-NEW/sources.json \
+  --out output/dataset-NEW --tracking-thresholds .06 .06 .1 .1 \
+  --skip-ineligible --require residual
+
+MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh \
+  python -m experiments.audit_dataset --data output/dataset-NEW/manifest.json \
+  --require residual --out output/dataset-audit-NEW.json
+```
+
+The threshold values above are exploratory; inspect train/validation behavior,
+choose and record thresholds, then freeze them before testing. Use
+`--inspect-only --skip-ineligible` on the converter to inspect source counts
+before writing windows. Use the original index `sources.json` for Risk-only data.
+
+`--skip-ineligible` reports too-short and no-window parents; malformed streams,
+changed evidence and invalid pair provenance still stop conversion. Missing
+future targets remain masked. A partial future with no observed violation is
+censored, not a negative. Dataset reports count positive/negative/censored Risk
+windows, correction/stable windows, contributing parents and phases per split.
+Missing splits write a diagnostic report without claiming a complete dataset.
+
+`--require residual` returns nonzero if train or val lacks either verified
+corrections or stable identity samples. Converted files remain available with a
+`not-ready` report for inspection. Risk training likewise requires valid positive
+and negative intervention samples in both train and val; Residual training
+requires both supervision categories in both splits. Training checks these
+conditions before optimization. Passing this availability gate does not prove
+sufficient sample size or independent physical trials. Test supervision is
+reported but never used to select thresholds or checkpoints.
 
 ## Checks and training commands
 

@@ -187,7 +187,10 @@ The Risk/Residual model, dataset checks and synthetic training pipeline are
 implemented in separate packages, with an optional correction interface in
 the shared simulator. A rollout-to-window converter and controlled paired
 teacher pilot have been added. One pilot pair passed physical/controller-state
-matching and a single-parent window audit. General teacher recovery and the P
+matching and a single-parent window audit. Split planning, batch indexing,
+resumable controlled pair collection and dataset supervision audits are now
+available; see [the data workflow](docs/learning.md#batch-data-workflow).
+General teacher recovery and the P
 trial entry point remain unfinished; there is no full training dataset or
 measured P grasp result.
 See [learning.md](docs/learning.md) for exact scope. Experimental results and

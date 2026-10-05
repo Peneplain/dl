@@ -1,0 +1,107 @@
+{
+  "status": "Proposed collection budget; prompt behavior needs pilot validation before large collection.",
+  "baseline_args": [
+    "--table-standoff",
+    ".20",
+    "--hold-seconds",
+    "10"
+  ],
+  "groups": [
+    {
+      "id": "train-a",
+      "split": "train",
+      "seed_start": 10000,
+      "count": 60,
+      "phase_prompts": {
+        "approach": "A person walks forward with two normal alternating steps and then stops upright. Both hands remain beside the hips.",
+        "settle": "A person stops walking and stands still upright with both feet planted and both hands relaxed beside the body.",
+        "prepare": "A person stands with both feet firmly planted, gently inclines the upper body forward to face down toward a block on the table, and pauses. Both hands remain beside the body.",
+        "reach": "A person stands upright and slowly bends the right elbow, raising the open right hand upward beside the body, then extending the hand forward above the table. Both feet stay planted and the left arm stays at the side.",
+        "lower": "A person stands upright and slowly lowers the open right hand beside a small block on a table, positioning the fingers around the block. Both feet stay planted and the left arm stays at the side.",
+        "close": "A person stands upright with the right hand around a small block on a table, keeping the right wrist and elbow still while closing the fingers. Both feet stay planted and the left arm stays at the side.",
+        "lift": "A person stands upright and slowly raises the right hand straight upward while holding a small block. The right elbow bends gently, both feet stay planted, and the left arm stays at the side.",
+        "hold": "A person stands upright, holding a small block steadily in the raised right hand with the right elbow bent. The right hand stays still, both feet stay planted, and the left arm stays at the side."
+      }
+    },
+    {
+      "id": "train-b",
+      "split": "train",
+      "seed_start": 11000,
+      "count": 60,
+      "phase_prompts": {
+        "approach": "A person takes two alternating steps forward and comes to an upright stop, with both hands beside the hips.",
+        "settle": "A person stands motionless after walking, keeping both feet on the ground and both hands relaxed at the sides.",
+        "prepare": "A person gently tilts the upper body forward toward the tabletop block, then pauses with feet planted and hands at the sides.",
+        "reach": "A person slowly bends the right elbow to raise the open right hand beside the body, then extends it over the table. The feet remain planted and the left arm stays at the side.",
+        "lower": "A person slowly lowers the open right hand beside the tabletop block and places the fingers around it. The feet remain planted and the left arm stays at the side.",
+        "close": "A person keeps the right wrist and elbow stationary beside the tabletop block while closing the fingers around it. Both feet remain planted and the left arm stays at the side.",
+        "lift": "A person lifts the block by slowly moving the gripping right hand vertically upward and gently bending the right elbow. Both feet remain planted and the left arm stays at the side.",
+        "hold": "A person maintains a steady raised right hand holding the block, with the right elbow bent, feet planted and left arm at the side."
+      }
+    },
+    {
+      "id": "val-a",
+      "split": "val",
+      "seed_start": 20000,
+      "count": 20,
+      "phase_prompts": {
+        "approach": "A person advances with two alternating footsteps and stops standing tall, leaving both hands next to the hips.",
+        "settle": "A person finishes walking and holds a quiet upright stance with both feet planted and arms resting beside the body.",
+        "prepare": "A person inclines the torso slightly forward toward the block on the table and holds that posture, with planted feet and hands by the sides.",
+        "reach": "A person raises the open right hand alongside the body by slowly flexing the elbow, then reaches forward over the table. The left arm rests at the side and both feet stay planted.",
+        "lower": "A person moves the open right hand slowly downward to the side of the block on the table, arranging the fingers around it. The left arm rests at the side and both feet stay planted.",
+        "close": "A person closes the right fingers around the tabletop block while holding the wrist and elbow in place. The left arm rests at the side and both feet stay planted.",
+        "lift": "A person slowly carries the grasped block straight up with the right hand, bending the right elbow slightly. The left arm rests at the side and both feet stay planted.",
+        "hold": "A person keeps the block motionless in the elevated right hand, with a bent right elbow, planted feet and the left arm resting at the side."
+      }
+    },
+    {
+      "id": "val-b",
+      "split": "val",
+      "seed_start": 21000,
+      "count": 20,
+      "phase_prompts": {
+        "approach": "A person walks ahead for two alternating steps, then pauses upright with hands near the hips.",
+        "settle": "A person remains upright and still after stopping, with feet fixed on the ground and hands loosely beside the torso.",
+        "prepare": "A person leans the upper body a little toward the table block and pauses, keeping the feet planted and arms at the sides.",
+        "reach": "A person first bends the right elbow and slowly brings the open hand upward next to the body, then reaches above the table. Keep the feet planted and the left arm beside the body.",
+        "lower": "A person slowly brings the open right hand down alongside the table block, with fingers surrounding it. Keep the feet planted and the left arm beside the body.",
+        "close": "A person holds the right wrist and elbow steady and closes the fingers around the block on the table. Keep the feet planted and the left arm beside the body.",
+        "lift": "A person raises the grasping right hand slowly along a vertical path, lifting the block while the right elbow bends gently. Keep the feet planted and the left arm beside the body.",
+        "hold": "A person stays upright and holds the raised block steadily in the right hand, maintaining a bent elbow, planted feet and a relaxed left arm beside the body."
+      }
+    },
+    {
+      "id": "test-a",
+      "split": "test",
+      "seed_start": 30000,
+      "count": 20,
+      "phase_prompts": {
+        "approach": "A person moves forward using two alternating steps, then stands upright with hands resting beside the hips.",
+        "settle": "A person pauses in a stable upright stance after walking, with both soles planted and hands resting at the sides.",
+        "prepare": "A person tips the torso gently toward a block on the tabletop and pauses. Both soles stay planted and the arms stay down at the sides.",
+        "reach": "A person slowly lifts the open right hand next to the body by bending the elbow, then extends the hand above the tabletop. Both soles stay planted and the left arm stays down at the side.",
+        "lower": "A person slowly descends with the open right hand beside the tabletop block, placing the fingers around the block. Both soles stay planted and the left arm stays down at the side.",
+        "close": "A person squeezes the right fingers around the tabletop block without moving the right wrist or elbow. Both soles stay planted and the left arm stays down at the side.",
+        "lift": "A person moves the right hand slowly straight upward with the block held in the fingers, gently flexing the elbow. Both soles stay planted and the left arm stays down at the side.",
+        "hold": "A person holds the lifted block steadily in the right hand and maintains the bent elbow, with both soles planted and the left arm down at the side."
+      }
+    },
+    {
+      "id": "test-b",
+      "split": "test",
+      "seed_start": 31000,
+      "count": 20,
+      "phase_prompts": {
+        "approach": "A person completes two alternating forward steps and halts upright, keeping the hands beside the hips.",
+        "settle": "A person holds an upright stationary pose after halting, leaving both feet planted and arms relaxed by the sides.",
+        "prepare": "A person gently angles the upper body forward toward the table block, then stays still with planted feet and hands by the sides.",
+        "reach": "A person brings the open right hand upward beside the torso with a slow elbow bend, then extends it forward over the table. Remain upright with planted feet and the left arm at the side.",
+        "lower": "A person lowers the open right hand slowly next to the tabletop block so the fingers surround it. Remain upright with planted feet and the left arm at the side.",
+        "close": "A person keeps the right wrist and elbow fixed while curling the fingers around the block on the table. Remain upright with planted feet and the left arm at the side.",
+        "lift": "A person slowly elevates the right hand vertically with the block grasped, allowing a gentle bend of the right elbow. Remain upright with planted feet and the left arm at the side.",
+        "hold": "A person keeps the raised right hand and grasped block steady with the elbow bent. Remain upright with planted feet and the left arm at the side."
+      }
+    }
+  ]
+}

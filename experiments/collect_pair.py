@@ -42,6 +42,15 @@ def source_args(source):
         command += ["--wrist-offset", *map(str, settings["nominal_wrist_offset_m"])]
     if settings.get("acquisition_z_min_m") is not None:
         command += ["--acquisition-z-min", str(settings["acquisition_z_min_m"])]
+    # Keep the source's pose-history length and backend/asset choices. Scene
+    # settings above remain authoritative for physical replay parameters.
+    plan_path = source / "plan.json" if (source / "plan.json").is_file() else source.parent / "plan.json"
+    if plan_path.is_file():
+        config = json.loads(plan_path.read_text())["config"]
+        for key in ("history_frames", "threads", "device", "text_device", "text_dtype",
+                    "ardy_repo", "sonic_repo", "assets"):
+            if key in config:
+                command += ["--" + key.replace("_", "-"), str(config[key])]
     return parse_args(command), request
 
 

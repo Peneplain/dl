@@ -22,6 +22,8 @@ from baseline.common import LOCK, sha256, write_json
 from baseline.rollout import SavedRollout
 from risk_residual.config import CONTEXT_DIM, NOMINAL_DIM, PHASES, SCHEMA, STATE_DIM, ModelConfig
 from risk_residual.data import WindowDataset, audit_parents, nominal_risk_labels
+from risk_residual.audit import readiness, supervision_summary
+from risk_residual.provenance import prompt_identity
 
 
 JOINTS = tuple(ISAACLAB_JOINT_NAMES)
@@ -43,6 +45,10 @@ FIELDS = {
 }
 
 
+class InsufficientHistory(ValueError):
+    """A completed but short episode cannot provide the required causal history."""
+
+
 def window_arrays(windows):
     arrays = {key: np.asarray([window[key] for window in windows]) for key in FIELDS}
     for key, shape in FIELDS.items():
@@ -58,7 +64,7 @@ def read_context(path):
                         if name.startswith("finger_ref:")]
         rows = list(reader)
     if len(rows) < 16:
-        raise ValueError(f"Not enough 50 Hz context rows: {path}")
+        raise InsufficientHistory(f"Not enough 50 Hz context rows: {path}")
     names = list(JOINTS)
     def vector(row, prefix):
         return np.asarray([float(row[f"{prefix}:{name}"]) for name in names])
@@ -228,7 +234,11 @@ def extract_parent(parent, thresholds, *, context_file=None):
     if pair is not None and attempt != Path(pair["branches"]["nominal"]["report"]).parent.resolve():
         raise ValueError("Parent nominal attempt differs from the paired branch")
     report = json.loads((attempt / "report.json").read_text())
+    if parent.get("source_report_sha256") and sha256(attempt / "report.json") != parent["source_report_sha256"]:
+        raise ValueError("Source report changed since episode indexing")
     if (report.get("request", {}).get("task") != "grasp" or
+            report.get("status") not in {"passed", "stopped"} or
+            not report.get("physics_executed") or not report.get("sonic_executed") or
             not (attempt / "rollout/metadata.json").exists() or
             not (attempt / "task.csv").exists()):
         raise ValueError("Training source must be a completed grasp rollout")
@@ -236,6 +246,11 @@ def extract_parent(parent, thresholds, *, context_file=None):
     if str(parent["scene_seed"]) != str(request["seed"]):
         raise ValueError("Declared scene seed differs from the nominal request")
     stream = context_file or ("effective_context.csv" if pair else "nominal_context.csv")
+    recorded_hashes = report.get("outputs_sha256", {})
+    if recorded_hashes:
+        for name in (stream, "task.csv", "rollout/metadata.json"):
+            if name not in recorded_hashes or sha256(attempt / name) != recorded_hashes[name]:
+                raise ValueError("Training evidence changed or was not recorded: " + name)
     rows = read_context(attempt / stream)
     measured, scene_hash = measured_features(attempt, rows)
     task_times, opposing_contact = read_task_contacts(attempt / "task.csv")
@@ -340,6 +355,7 @@ def extract_parent(parent, thresholds, *, context_file=None):
         # no teacher action or corrected future as an inference input.
         clean_parent = {**parent, "nominal": str(teacher)}
         clean_parent.pop("pair")
+        clean_parent["source_report_sha256"] = sha256(teacher / "report.json")
         clean_rows, clean_scene_hash, clean_provenance = extract_parent(
             clean_parent, thresholds, context_file="effective_context.csv")
         if clean_scene_hash != scene_hash:
@@ -348,16 +364,14 @@ def extract_parent(parent, thresholds, *, context_file=None):
         source_files.update({"clean/" + name: digest for name, digest in
                              clean_provenance["source_files_sha256"].items()})
     return result, scene_hash, {"parent_id": parent["parent_id"],
-                                "prompt_identity": json.dumps(
-                                    [request.get("prompt"), request.get("phase_prompts", {}),
-                                     request.get("prompt_profile")], sort_keys=True),
+                                "prompt_identity": prompt_identity(request),
                                 "source_files_sha256": source_files,
                                 "decision_time_bounds":
                                 [float(min(row["decision_time"] for row in result)),
                                  float(max(row["decision_time"] for row in result))] if result else None}
 
 
-def build(source_plan, output, *, thresholds):
+def build(source_plan, output, *, thresholds, skip_ineligible=False, require=None):
     source_plan, output = Path(source_plan).resolve(), Path(output).resolve()
     if output.exists():
         raise FileExistsError("Use a fresh dataset directory")
@@ -370,19 +384,33 @@ def build(source_plan, output, *, thresholds):
     scenes = set()
     source_provenance = []
     prompt_owners = {}
+    skipped = []
     for parent in parents:
-        rows, scene_hash, provenance = extract_parent(parent, thresholds)
+        try:
+            rows, scene_hash, provenance = extract_parent(parent, thresholds)
+        except InsufficientHistory as error:
+            if not skip_ineligible:
+                raise
+            skipped.append({"parent_id": parent["parent_id"], "reason": str(error)})
+            continue
         if not rows:
-            raise ValueError("Parent has no eligible decision windows")
+            if not skip_ineligible:
+                raise ValueError("Parent has no eligible decision windows")
+            skipped.append({"parent_id": parent["parent_id"], "reason": "no eligible decision windows"})
+            continue
         split_rows[parent["split"]].extend(rows)
         scenes.add(scene_hash)
         identity = provenance.pop("prompt_identity")
         if identity in prompt_owners and prompt_owners[identity] != parent["split"]:
-            raise ValueError("Exact prompt instructions leak across parent splits")
+            raise ValueError("Effective prompt instructions leak across parent splits")
         prompt_owners[identity] = parent["split"]
         source_provenance.append(provenance)
     if any(not rows for rows in split_rows.values()):
-        raise ValueError("Train, val and test each need at least one parent with windows")
+        output.mkdir(parents=True)
+        missing = [split for split, rows in split_rows.items() if not rows]
+        write_json(output / "report.json", {"status": "not-ready", "dataset_written": False,
+                   "missing_splits": missing, "skipped_parents": skipped})
+        raise ValueError("No usable windows in splits: " + ", ".join(missing))
     output.mkdir(parents=True)
     try:
         for split, windows in split_rows.items():
@@ -399,15 +427,20 @@ def build(source_plan, output, *, thresholds):
                                    "source_plan_sha256": sha256(source_plan),
                                    "source_files": source_provenance}}
         write_json(output / "manifest.json", manifest)
-        for split in split_rows:
-            WindowDataset(output / "manifest.json", split, ModelConfig())
+        summaries = {split: supervision_summary(WindowDataset(output / "manifest.json", split,
+                                                              ModelConfig()).arrays)
+                     for split in split_rows}
         report = {"status": "passed", "source_plan": str(source_plan),
                   "windows": {split: len(rows) for split, rows in split_rows.items()},
                   "correction_samples": {split: sum(bool(row["correction_sample"]) for row in rows)
                                          for split, rows in split_rows.items()},
                   "stable_samples": {split: sum(bool(row["stable_sample"]) for row in rows)
                                       for split, rows in split_rows.items()},
-                  "physics_executed_by_collector": False}
+                  "physics_executed_by_collector": False, "skipped_parents": skipped,
+                  "splits": summaries, "readiness": {stage: readiness(summaries, stage)
+                                                      for stage in ("risk", "residual")}}
+        if require and not report["readiness"][require]["ready"]:
+            report["status"] = "not-ready"
         write_json(output / "report.json", report)
         return report
     except Exception:
@@ -415,7 +448,7 @@ def build(source_plan, output, *, thresholds):
         raise
 
 
-def inspect(source_plan, *, thresholds):
+def inspect(source_plan, *, thresholds, skip_ineligible=False):
     """Audit and summarize pilot parents without claiming a trainable split."""
     plan = json.loads(Path(source_plan).read_text())
     parents = plan["parents"]
@@ -425,10 +458,17 @@ def inspect(source_plan, *, thresholds):
     result = []
     prompt_owners = {}
     for parent in parents:
-        rows, scene_hash, provenance = extract_parent(parent, thresholds)
+        try:
+            rows, scene_hash, provenance = extract_parent(parent, thresholds)
+        except InsufficientHistory as error:
+            if not skip_ineligible:
+                raise
+            result.append({"parent_id": parent["parent_id"], "split": parent["split"],
+                           "windows": 0, "reason": str(error)})
+            continue
         identity = provenance["prompt_identity"]
         if identity in prompt_owners and prompt_owners[identity] != parent["split"]:
-            raise ValueError("Exact prompt instructions leak across parent splits")
+            raise ValueError("Effective prompt instructions leak across parent splits")
         prompt_owners[identity] = parent["split"]
         if rows:
             with tempfile.TemporaryDirectory() as temporary:
@@ -447,6 +487,9 @@ def inspect(source_plan, *, thresholds):
         result.append({"parent_id": parent["parent_id"], "split": parent["split"],
                        "scene_sha256": scene_hash, "windows": len(rows),
                        "risk_positive": sum(bool(row["intervention_target"]) for row in rows),
+                       "risk_negative": sum(bool(row.get("intervention_valid", True)) and
+                                            not bool(row["intervention_target"]) for row in rows),
+                       "risk_censored": sum(not bool(row.get("intervention_valid", True)) for row in rows),
                        "correction_samples": sum(bool(row["correction_sample"]) for row in rows),
                        "stable_samples": sum(bool(row["stable_sample"]) for row in rows),
                        "decision_time_bounds": provenance["decision_time_bounds"]})
@@ -459,6 +502,10 @@ def main():
     parser.add_argument("--out", type=Path)
     parser.add_argument("--inspect-only", action="store_true",
                         help="Validate and summarize one or more parents without writing a dataset")
+    parser.add_argument("--skip-ineligible", action="store_true",
+                        help="Report and skip too-short/no-window parents; corruption still fails")
+    parser.add_argument("--require", choices=("risk", "residual"),
+                        help="Return nonzero if the written dataset lacks required training supervision")
     parser.add_argument("--tracking-thresholds", type=float, nargs=4, required=True,
                         metavar=("LEFT", "RIGHT", "TORSO", "LOWER"))
     args = parser.parse_args()
@@ -466,12 +513,17 @@ def main():
     if args.inspect_only:
         if args.out is not None:
             parser.error("--out cannot be combined with --inspect-only")
-        result = inspect(args.sources, thresholds=thresholds)
+        if args.require:
+            parser.error("--require applies to dataset conversion")
+        result = inspect(args.sources, thresholds=thresholds, skip_ineligible=args.skip_ineligible)
     else:
         if args.out is None:
             parser.error("--out is required unless --inspect-only is set")
-        result = build(args.sources, args.out, thresholds=thresholds)
+        result = build(args.sources, args.out, thresholds=thresholds,
+                       skip_ineligible=args.skip_ineligible, require=args.require)
     print(json.dumps(result), flush=True)
+    if result["status"] == "not-ready":
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

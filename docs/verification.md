@@ -801,3 +801,36 @@ summary, confirmed it was writable, and showed the 13 TB `/data` filesystem.
 `python -m unittest discover -s tests -v` in `dl-musa-render:latest` passed
 85 tests with three optional RGB tests skipped. No new batch, training run, or
 risk/residual outcome was generated during this migration.
+
+## Batch data tooling checks — 2026-10-05
+
+The fixed-split planner, completed-batch indexer, resumable controlled pair
+wrapper and dataset supervision audit were added without changing B0 control.
+`configs/data/collection.json` proposes six English prompt groups and disjoint
+seed ranges for 120 train, 40 val and 40 test parent episodes. The planner's
+actual CLI wrote `output/data-collection-261005-code-ready`, with plan hash
+`690d6b1224d12743fbe445b7500a2c853abd278eb603e5d786572df114006ff1`.
+It wrote six standard B0 resume commands and reported `physics_executed=false`.
+None of those batch commands was executed during this code change.
+
+The supported S4000 container ran 98 unit tests in 5.103 seconds, with three
+optional RGB tests skipped and all remaining tests passing. The final log is
+`output/data-code-check-261005/unittest-final.log`. New regression tests cover
+seed overlap, implicit/explicit prompt identity, altered evidence, short and
+pending episodes, stopped grasp failures, pair resume without duplicate
+execution, interrupted and failed pair retention, zero teacher candidates,
+source history/backend settings, masked supervision counts, and a converted
+NPZ write/load round trip with an explicit not-ready Residual report. Pair
+execution in these tests is mocked; converted windows are temporary synthetic
+fixtures. These checks do not establish physical recovery, grasp success or
+generalization of the proposed prompt/perturbation configurations.
+
+With `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`,
+`python scripts/check_baseline.py --device musa` passed the installed dependency,
+pinned source, local weight and text-encoder compatibility checks. Its log is
+`output/data-code-check-261005/assets.log`. No new packages or models were
+downloaded. The converter now reports/skips only short or no-window parents
+when explicitly requested, while changed evidence and malformed streams still
+fail. Training refuses missing Risk classes or missing correction/identity
+categories in train or val before optimization. A real disjoint dataset,
+new physical pairs and the general corrective teacher remain unverified.
