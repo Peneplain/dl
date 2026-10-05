@@ -155,3 +155,38 @@ private session text or restricted robot data.
   Historical verification links into removed directories refer to those
   archived reports. Raw removed rollouts were not archived. The separate
   original storage-migration backup was outside this cleanup request.
+
+## Real Risk dataset and MUSA training — 2026-10-06
+
+- The 196 eligible collection parents were converted without additional skips
+  into `output/dataset-261006-risk/manifest.json`: 24,163 train, 8,589 val and
+  9,235 test windows. Train/val include both intervention classes and pass
+  Risk availability checks. The exploratory tracking thresholds remain
+  `.06 .06 .1 .1`; test data did not choose settings or checkpoints.
+- The dataset has zero verified corrections in every split, so Residual is
+  not ready. It has 639/236/212 stable identity windows, respectively.
+  Collect verified teacher pairs before rebuilding for Residual; extra
+  ordinary B0 rollouts do not supply same-state correction supervision.
+- The full-width model initially failed MUSA's SDPA descriptor setup. A
+  MUSA-only explicit-attention encoder path now retains identical parameter
+  names, dimensions, layer count and dropout. CPU uses the ordinary PyTorch
+  path. The frozen ARDY/SONIC execution chain was not changed.
+- A real full-size batch passed forward, backward, optimizer update and eval
+  on physical GPU 2. A subsequent full epoch passed 378 updates, validation
+  and checkpoint writes under `output/risk-epoch-check-261006`; validation
+  loss was 0.1403171413. These are training checks, not physical P evaluation.
+- The suite passed 100 tests with three optional RGB skips. The log is
+  `output/risk-training-suite-261006.log`. Attention regression checks compare
+  parameter keys, output and gradients with the ordinary encoder and exercise
+  the full-width dropout path while SDPA is unavailable.
+- `scripts/train_risk_multiseed.sh` launches one independent Risk seed per
+  physical GPU, default 0/2/3, each using the existing 30-epoch config. It is
+  not DDP. Use the documented `nohup` command to continue after disconnect;
+  fresh run directories contain per-seed logs/checkpoints and a final summary.
+  GPU 1 was occupied at inspection. No new nominal batch was started.
+- The launcher itself passed a simultaneous one-epoch run on all three GPUs,
+  saved at `output/risk-multiseed-261006-023521`. All three reports and the
+  final summary passed. The ordinary 30-epoch run is prepared but has not
+  started. After teacher conversion changes the manifest, Risk must be
+  trained on the final fixed dataset again before Residual because provenance
+  checks require matching Risk/Residual datasets.

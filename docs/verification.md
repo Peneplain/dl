@@ -947,3 +947,86 @@ failures. The log is
 `/home/group3/dl-output-history/cleanup-261006/index-check.log`. Indexing loaded
 no policy and ran no physics; it did not write learning windows or establish
 Residual supervision readiness.
+
+## Real-data Risk training checks — 2026-10-06
+
+The completed nominal source index was converted with:
+
+```bash
+MTHREADS_VISIBLE_DEVICES=0 MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh \
+  python -m experiments.build_dataset \
+  --sources output/data-collection-261005/index/sources.json \
+  --tracking-thresholds .06 .06 .1 .1 --skip-ineligible --require risk \
+  --out output/dataset-261006-risk
+```
+
+Conversion passed with 24,163/8,589/9,235 train/val/test windows from
+116/40/40 parents. No further parents were skipped. The report records
+22,358/7,965/8,639 positive, 1,746/610/584 negative and 59/14/12 censored
+Risk windows. Risk readiness passed; Residual readiness failed with zero
+corrections in train and val. Stable windows total 639/236/212. These counts
+establish supervision availability, not independent sample size or model
+performance. Window labels come from nominal futures; test data was not
+used to select training parameters. The artifacts are
+`output/dataset-261006-risk/{manifest.json,report.json,train.npz,val.npz,test.npz}`
+and `output/dataset-261006-risk-build.log`.
+
+On installed PyTorch 2.9.1 / torch_musa 2.9.1, the 256-wide model with eight
+heads and dropout 0.1 initially failed in MUSA SDPA descriptor creation:
+`mudnnSetScaledDotProductAttentionDescriptorEx`. Selecting the SDPA math
+backend did not resolve the error. The learning-only encoder now uses
+explicit attention matrix products, softmax and dropout on MUSA while
+retaining projections, normalization, parameter names and all settings.
+The frozen baseline code, vendor environment and simulation were unchanged.
+
+Physical GPU 2 was selected with `MTHREADS_VISIBLE_DEVICES=2`; inside that
+container `MUSA_VISIBLE_DEVICES=0` is required. Setting the latter to 2
+incorrectly hid the sole selected device. The successful real-data
+64-sample train/backward/update and validation check is recorded in
+`output/risk-step-check-261006.json` (losses 1.98804 / 1.41695, unclipped
+gradient norm 6.11613). Its random initialization was not pinned and these
+numbers are compatibility evidence only.
+
+A subsequent seed-0 full epoch used the ordinary training entry point and a
+copy of `configs/learning/p.json` with only the epoch budget reduced to one
+(`output/risk-epoch-check-261006-config.json`). All 24,163 train and 8,589 val
+windows were processed, with 378 optimizer updates and 3,227,812 parameters.
+Training loss was 0.3159112456 and validation loss 0.1403171413; the measured
+training loop took 33.8171 seconds. `best.pt`, `last.pt`, `metrics.json` and
+`report.json` were written under `output/risk-epoch-check-261006`. Best
+checkpoint SHA-256:
+`019da1f15baf7e834d720bc267f6bad6b56ed6ed343e1d73042e728b148273c0`.
+The outer log is `output/risk-epoch-check-261006.log`. No test inference or
+physical Risk/Residual controller evaluation was performed.
+
+The one-epoch `best.pt` also reloaded through the strict production checkpoint
+loader and ran all validation batches in inference mode on physical GPU 4.
+At the fixed exploratory threshold 0.5, the 8,575 labeled validation windows
+gave TP=7,839, TN=500, FP=110 and FN=126 (14 censored windows excluded).
+Risk recall was 0.98418, specificity 0.81967 and balanced accuracy 0.90193.
+This check used no threshold selection and no test data; correlated windows
+and the exploratory labels limit the interpretation. The receipt is
+`output/risk-epoch-check-261006-validation.json`. It does not establish the
+proposal's physical intervention accuracy or grasp benefit.
+
+The server regression suite passed 100 tests, with three optional RGB skips,
+in 5.392 seconds; log `output/risk-training-suite-261006.log`. The two new
+attention tests verify CPU output/gradient equivalence and checkpoint keys,
+and prove the full-width dropout/backward path bypasses SDPA. Shell syntax
+and launcher help checks also passed.
+
+The actual launcher then passed three concurrent one-epoch jobs:
+
+```bash
+bash scripts/train_risk_multiseed.sh 0,2,3 \
+  output/dataset-261006-risk/manifest.json \
+  output/risk-epoch-check-261006-config.json
+```
+
+Artifacts are under `output/risk-multiseed-261006-023521`, with the outer
+log `output/risk-multiseed-check-261006.log`. Seeds 0/1/2 on physical GPUs
+0/2/3 each completed 378 updates, full validation and checkpoint writes;
+their best validation losses were 0.1403171413, 0.1588276450 and
+0.1544478830. All three reports and `summary.json` passed. This proves the
+separate-container GPU mapping and launcher lifecycle; it is not one-model
+DDP, a 30-epoch experiment, or evidence of physical grasp improvement.

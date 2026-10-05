@@ -26,6 +26,7 @@ that the proposed controller improves a physical grasp. Settings in
 | `experiments/plan_data.py` | Fixed split planning and indexing existing B0 batches |
 | `experiments/collect_pairs.py` | Resumable multi-source controlled pair collection |
 | `experiments/audit_dataset.py` | Per-split supervision counts and readiness checks |
+| `scripts/train_risk_multiseed.sh` | Independent Risk seeds on separate physical MUSA GPUs |
 
 Risk uses 16 execution samples at 50 Hz, spanning 300 ms, and eight nominal
 samples 40 ms apart, spanning 0–280 ms. The latter is distinct from SONIC's
@@ -60,8 +61,9 @@ The rollout-to-window converter and controlled paired-teacher pilot are
 implemented and have been checked on one real simulation pair. Batch planning,
 indexing, resumable pairing and supervision audits are implemented separately
 from B0. These tools do not establish that new prompt groups or perturbations
-produce successful physical trials. A full
-train/validation/test dataset has not been collected. Arbitrary mid-episode
+produce successful physical trials. The October 6 nominal collection now
+provides real train/validation/test Risk windows, but no verified correction
+samples for Residual training. Arbitrary mid-episode
 checkpoint restoration, a general corrective teacher, and the P evaluation
 entry point remain unimplemented.
 `scripts/run.py` does not yet launch P trials. No P success rate, latency or
@@ -325,6 +327,69 @@ sufficient sample size or independent physical trials. Test supervision is
 reported but never used to select thresholds or checkpoints.
 
 ## Checks and training commands
+
+### Current real-data Risk pilot — 2026-10-06
+
+The completed 200-parent B0 collection was indexed and converted into
+`output/dataset-261006-risk/manifest.json`. Four execution failures were
+ineligible at indexing; the remaining 196 parents passed conversion without
+additional skips. The supervision availability audit passed for Risk:
+
+| Split | Parents | Windows | Risk positive | Risk negative | Censored | Stable identity | Corrections |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| train | 116 | 24,163 | 22,358 | 1,746 | 59 | 639 | 0 |
+| val | 40 | 8,589 | 7,965 | 610 | 14 | 236 | 0 |
+| test | 40 | 9,235 | 8,639 | 584 | 12 | 212 | 0 |
+
+This is enough to run an initial Risk training pilot. Windows overlap and are
+not independent episodes; positive labels dominate. Availability does not
+establish final sample adequacy or grasp improvement. The initial tracking
+thresholds are `.06 .06 .1 .1`; later calibration must use train/validation
+evidence only. Residual is not ready: both train and val have zero verified
+correction samples. Collect and verify teacher pairs before rebuilding data
+for that stage. No additional nominal batch is needed just to start Risk.
+When teacher conversion produces a new manifest, train Risk again on that
+fixed dataset before Residual: checkpoint loading requires matching Risk and
+Residual dataset provenance. The current Risk run is an initial pilot.
+
+From the server repository, launch the fixed 30-epoch budget in the background:
+
+```bash
+cd /home/group3/dl
+nohup bash scripts/train_risk_multiseed.sh 0,2,3 > output/risk-overnight-261006.log 2>&1 < /dev/null &
+```
+
+These are three independent models with seeds 0/1/2 on physical GPUs 0/2/3,
+not distributed training of one model. GPU 1 was occupied at inspection.
+Each container sees its selected physical device as logical MUSA device 0.
+The launcher uses the installed `dl-musa-render:latest` environment, audits the
+existing default dataset before starting, and converts it if missing. A lock
+prevents duplicate launchers. It preserves incomplete conversion directories
+and never regenerates ARDY rollouts. Custom GPU, manifest and config paths are
+optional positional arguments; custom data still passes the training loader's
+audit and provenance checks.
+
+The outer log prints a fresh `output/risk-multiseed-<timestamp>` directory.
+Each `seed-<n>.log` records epochs/errors; each `seed-<n>/` holds `best.pt`,
+`last.pt`, `metrics.json` and `report.json`. `launch.json` records GPU/seed and
+configuration/manifest hashes; `summary.json` reports all jobs after they exit.
+Do not assume a shell PID means training succeeded: check reports and logs.
+
+```bash
+tail -n 30 /home/group3/dl/output/risk-overnight-261006.log
+```
+
+The installed MUSA SDPA operator rejected the full-width model's dropout
+descriptor. `PortableEncoderLayer` uses explicit attention matrix products,
+softmax and dropout on MUSA only. Parameters, checkpoint keys, layer count,
+width and dropout remain unchanged. CPU keeps the standard PyTorch path.
+Real-data forward, backward, optimizer update, full-epoch training, validation
+and checkpoint saving passed with the full 256-wide, four-layer model and batch
+size 64; see `docs/verification.md`.
+The actual launcher also passed a simultaneous one-epoch run on all three
+GPUs; the default 30-epoch run still requires the start command above.
+
+### General commands
 
 ```bash
 python -m unittest discover -s tests -v

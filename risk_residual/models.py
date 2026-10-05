@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from baseline.adapters.joints import ARM_INDICES
 from risk_residual.config import CONTEXT_DIM, NOMINAL_DIM, STATE_DIM, ModelConfig
@@ -26,6 +27,39 @@ class RiskOutput:
                             self.balance_logits.sigmoid()), dim=-1)
 
 
+class PortableEncoderLayer(nn.TransformerEncoderLayer):
+    """Keep ordinary attention math when the vendor SDPA descriptor is unsupported.
+
+    Parameter names, projections, normalization and dropout match the standard
+    layer. No global backend settings or frozen baseline modules are changed.
+    """
+
+    def forward_unfused(self, src, src_mask=None, src_key_padding_mask=None, is_causal=False):
+        def attention(x):
+            # need_weights=True selects explicit bmm/softmax/dropout in PyTorch,
+            # bypassing both SDPA and native Transformer inference shortcuts.
+            q = x.transpose(0, 1)
+            a = self.self_attn
+            output, _ = F.multi_head_attention_forward(
+                q, q, q, a.embed_dim, a.num_heads, a.in_proj_weight, a.in_proj_bias,
+                a.bias_k, a.bias_v, a.add_zero_attn, a.dropout,
+                a.out_proj.weight, a.out_proj.bias, training=self.training,
+                key_padding_mask=src_key_padding_mask, need_weights=True,
+                attn_mask=src_mask, average_attn_weights=False, is_causal=is_causal)
+            return self.dropout1(output.transpose(0, 1))
+
+        if self.norm_first:
+            src = src + attention(self.norm1(src))
+            return src + self._ff_block(self.norm2(src))
+        src = self.norm1(src + attention(src))
+        return self.norm2(src + self._ff_block(src))
+
+    def forward(self, src, src_mask=None, src_key_padding_mask=None, is_causal=False):
+        if src.device.type == "musa":
+            return self.forward_unfused(src, src_mask, src_key_padding_mask, is_causal)
+        return super().forward(src, src_mask, src_key_padding_mask, is_causal)
+
+
 class TemporalBackbone(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -35,7 +69,7 @@ class TemporalBackbone(nn.Module):
         self.history_position = nn.Parameter(torch.randn(config.history_steps, config.width) * .02)
         self.time_position = nn.Parameter(torch.randn(config.horizon, config.width) * .02)
         self.body_position = nn.Parameter(torch.randn(config.body_groups, config.width) * .02)
-        layer = nn.TransformerEncoderLayer(config.width, config.heads, 4 * config.width,
+        layer = PortableEncoderLayer(config.width, config.heads, 4 * config.width,
                                             config.dropout, activation="gelu", batch_first=True,
                                             norm_first=True)
         self.encoder = nn.TransformerEncoder(layer, config.layers,

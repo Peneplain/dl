@@ -195,9 +195,11 @@ teacher pilot have been added. One pilot pair passed physical/controller-state
 matching and a single-parent window audit. Split planning, batch indexing,
 resumable controlled pair collection and dataset supervision audits are now
 available; see [the data workflow](docs/learning.md#batch-data-workflow).
-General teacher recovery and the P
-trial entry point remain unfinished; there is no full training dataset or
-measured P grasp result.
+The completed October collection now supplies audited train/validation/test
+Risk windows and a launcher for independent training seeds on separate MUSA
+GPUs. Residual still lacks verified correction samples. General teacher
+recovery and the P trial entry point remain unfinished; no measured P grasp
+result is claimed.
 See [learning.md](docs/learning.md) for exact scope. Experimental results and
 verification gaps are maintained in [verification.md](docs/verification.md).
 
