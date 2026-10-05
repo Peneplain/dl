@@ -60,3 +60,18 @@ private session text or restricted robot data.
    new measured evidence in `docs/verification.md`.
 5. Check this note and `docs/learning.md` at the start of a new chat. At the
    end of material work, update their status so later chats have a handoff.
+
+## Storage handoff — 2026-10-05
+
+- `output` on the S4000 host is a symlink to `/data/group3/dl-output` on the
+  larger data filesystem. `docker/run-musa.sh` bind-mounts an external output
+  symlink target automatically. Ordinary `./run.sh batch ...` commands need no
+  additional output argument. Verify with `df -h output` on the host.
+- The former 943-file output tree remains at
+  `/home/group3/dl-output-backup-20261005`. Its copy under `/data` passed a
+  checksum-mode comparison. Do not delete the backup without separately
+  deciding that retention is no longer needed.
+- A container mount check passed and 85 server unit tests passed (three
+  optional RGB tests skipped). This storage change collected no new episodes.
+  A leakage-free train/validation/test dataset and general corrective teacher
+  remain outstanding.

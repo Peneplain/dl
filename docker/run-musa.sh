@@ -23,6 +23,23 @@ display_flags=()
 network_flags=()
 venv_flags=()
 gui_flags=()
+output_mount=()
+
+# A host-side output symlink may point outside the repository bind mount.
+# Mount its resolved directory at the same absolute path so the symlink also
+# resolves inside the container. Ordinary repository-local output needs no
+# extra mount.
+if [[ -L "$repo_root/output" ]]; then
+  output_target="$(readlink -f "$repo_root/output")"
+  if [[ ! -d "$output_target" ]]; then
+    echo "Output symlink target is not a directory: $output_target" >&2
+    exit 1
+  fi
+  case "$output_target" in
+    "$repo_root"/*) ;;
+    *) output_mount+=(-v "$output_target:$output_target") ;;
+  esac
+fi
 
 # The baseline installer targets this repository-local environment. Put it
 # first on PATH when it exists so `run-musa.sh bash` and direct commands use
@@ -73,6 +90,7 @@ exec docker run --rm "${tty_flags[@]}" \
   "${display_flags[@]}" \
   "${venv_flags[@]}" \
   "${gui_flags[@]}" \
+  "${output_mount[@]}" \
   -e MTHREADS_VISIBLE_DEVICES="${visible_devices}" \
   -v "${repo_root}:/workspace/dl" \
   -w /workspace/dl \

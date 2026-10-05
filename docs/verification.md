@@ -781,3 +781,23 @@ synthetic and its report correctly records that no physics was executed. The
 physical pair and single-parent loader audit above supply the separate
 measured evidence for this data collector. Full split conversion and learned
 P deployment remain unverified.
+
+## External output storage migration — 2026-10-05
+
+The S4000 host's `/home` filesystem had only about 15 GB available while
+`/data` had about 12 TB available. The administrator-created
+`/data/group3/dl-output` directory is owned by `group3:group3` with mode 2770.
+The existing `output/` tree was copied there with `rsync`: 943 regular files,
+4,147,245,327 logical bytes. A checksum-mode dry run reported no differences,
+and both trees had 943 regular files and approximately 3.9 GB allocated.
+The original tree remains at `/home/group3/dl-output-backup-20261005` and has
+not been deleted. `/home/group3/dl/output` is now a symlink to the `/data`
+directory.
+
+`docker/run-musa.sh` detects an external output symlink and mounts its resolved
+target at the same absolute path in the container. A no-simulation container
+check resolved `output` to `/data/group3/dl-output`, read the historical batch
+summary, confirmed it was writable, and showed the 13 TB `/data` filesystem.
+`python -m unittest discover -s tests -v` in `dl-musa-render:latest` passed
+85 tests with three optional RGB tests skipped. No new batch, training run, or
+risk/residual outcome was generated during this migration.

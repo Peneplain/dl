@@ -36,6 +36,12 @@ Results are saved automatically to `output/batch-YYMMDD-HHMMSS/`, using
 Asia/Shanghai time, for example `batch-261003-031351`. If another launch has
 already reserved the same second, allocation waits for the next available second.
 Existing sessions are never overwritten. Attempts start at `attempt-00001` and reset independently.
+On the S4000 host, `output` may be a symlink to a writable directory on the
+larger `/data` filesystem. `docker/run-musa.sh` detects an external symlink
+target and bind-mounts it at the same absolute path in the container. Check
+`df -h output` before a large batch; no special `--output-root` argument is
+needed when the symlink and mount are present. Keep any old output backup until
+its copy has been checked file by file.
 `--seed 42 --batch 20` uses seeds 42 through 61. Each attempt samples block XY
 with its own seed; ARDY phase seeds add the phase index to that seed.
 Repeating the same arguments reproduces the sampling plan; folder timestamps
