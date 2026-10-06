@@ -35,16 +35,18 @@ private session text or restricted robot data.
   check and optional correction provider. A controlled paired-teacher pilot
   and rollout-to-window converter passed one same-state simulation pair and
   single-parent loader audit; see `docs/learning.md` and `docs/verification.md`.
-  A disjoint train/validation/test dataset, arbitrary mid-episode branching,
-  general teacher recovery and the P trial entry point remain future work.
+  The final fixed-split dataset and two full 30-epoch Risk runs are now
+  complete; see the latest completion handoff below. Arbitrary mid-episode
+  branching, general teacher recovery, Residual training and the P trial
+  entry point remain future work.
 - The October 5 merge passed 78 server tests, pinned-asset/MUSA operator checks,
   baseline reference smoke and reduced-width synthetic Risk/Residual training
   on MUSA. An unprompted two-second B0 episode executed 100 SONIC frames in
   MuJoCo. These checks do not measure P grasp success.
 - The paired-teacher/data-conversion update passed 84 server tests, a new
   baseline reference smoke, one matched successful-clean/failed-perturbed
-  simulation pair, and a single-parent loader audit. The available prompt
-  groups do not support a leakage-free three-split dataset yet.
+  simulation pair, and a single-parent loader audit. At that pilot stage,
+  the available prompt groups did not support a leakage-free three-split dataset.
 - Real weights, large outputs, environments and upstream source checkouts stay
   outside Git. Use `output/` for fresh experiment artifacts.
 
@@ -186,7 +188,77 @@ private session text or restricted robot data.
   GPU 1 was occupied at inspection. No new nominal batch was started.
 - The launcher itself passed a simultaneous one-epoch run on all three GPUs,
   saved at `output/risk-multiseed-261006-023521`. All three reports and the
-  final summary passed. The ordinary 30-epoch run is prepared but has not
-  started. After teacher conversion changes the manifest, Risk must be
-  trained on the final fixed dataset again before Residual because provenance
-  checks require matching Risk/Residual datasets.
+  final summary passed. At that check, the ordinary 30-epoch run was
+  prepared but had not started. The final teacher-derived manifest now has
+  completed Risk runs, as recorded below. Residual provenance checks require
+  the matching final Risk checkpoint and dataset.
+
+## Authorized background teacher-to-Risk workflow — 2026-10-06
+
+- The user authorized pushing current server code, starting teacher pairs,
+  automatically converting/auditing the final dataset, then training Risk on
+  all available cards. Existing main `aa3b252` was already pushed and clean.
+- `scripts/teacher_risk_pipeline.py` implements that sequence using the host
+  standard library and existing MUSA container. Preferred teacher GPU is 4;
+  collection remains serial. The current fixed plan has 207 candidates from
+  69 successful parents (42 train, 13 val, 14 test), with no missing required
+  phase references. These are candidates, not verified recovery counts.
+- Conversion is followed by a separate Risk AND Residual readiness audit.
+  Failed/incomplete audits stop training. Rejected individual collection
+  attempts are preserved, and completion must be established from the report.
+- Risk selection rechecks zero memory/utilization and listed processes before
+  starting one 30-epoch independent seed on each idle physical GPU. GPU 1's
+  existing 16.5 GiB Python process was retained. Seven cards were idle at
+  preflight; actual selection is recorded at training time. No DDP is claimed.
+- Atomic `state.json`, per-stage logs, PIDs, source hashes and unique event IDs
+  provide monitoring and notification evidence. The detached server process
+  chains stages directly. Desktop scheduled monitoring is only for notices.
+- Five workflow tests passed locally. Physical GPU 7 also passed a real
+  one-epoch check of the launcher's explicit output-directory argument, saved
+  at `output/pipeline-launch-check-261006`; validation loss was 0.1403171413.
+  This is execution compatibility, not a learned-control result.
+- Workflow code was pushed as `0c2e00a`, then the fresh
+  `output/teacher-risk-261006` run was detached with parent PID 1390625,
+  SID 1390625 and PPID 1. Collection used physical GPU 4. The first
+  post-disconnect check recorded seven of 207 candidates completed, two
+  verified recoveries and one rejected execution. The final completion
+  evidence is recorded below.
+- The existing `dl-teacher-data-finish-and-run` heartbeat was updated to
+  `DL teacher → dataset → Risk monitor`, checking every 15 minutes for this
+  exact run. It keeps quiet at healthy unchanged progress, reports new stage
+  completions/failures, and sends deduplicated `[DL]: ` Outlook notices to
+  `wentao_gu@outlook.com`. It pauses after terminal notices are delivered.
+  The record-sync and generic mail-queue automations remain paused.
+
+## Completed teacher-to-Risk workflow — 2026-10-06
+
+- The exact run `output/teacher-risk-261006` completed at
+  2026-10-05 21:26:36 UTC (2026-10-06 05:26:36 Asia/Shanghai).
+  `state.json` records schema `dl-teacher-risk-pipeline-v1`, status
+  `complete`, and four stage-completion events. The parent exited after
+  writing the terminal state; this was a completed workflow.
+- All 207 teacher candidates were processed: 48 verified controlled
+  recoveries, 68 failed/rejected pairs and zero pending. Individual failures
+  remain in the artifacts. General recovery of naturally failed states is
+  still outside the implemented teacher's scope.
+- Conversion and the independent availability audit both passed. Final
+  train/val/test windows are 53,485/17,268/20,222, with 28/7/13 correction
+  windows and 1,686/624/723 stable identity windows. No source parents were
+  skipped by conversion. Parent variants share split ownership; window
+  counts are not independent episode counts.
+- Risk ran independent seeds 0 and 1 on physical GPUs 2 and 3, respectively,
+  using the existing 30-epoch configuration. Other cards had active workloads
+  at training startup. Each model completed 25,080 updates with 3,227,812
+  parameters on MUSA. The best validation losses were 0.0865046687 and
+  0.0998180839, both at epoch 3. Each `best.pt` hash matches its final report.
+- Use `output/teacher-risk-261006/dataset/manifest.json` for the final
+  fixed dataset. Per-seed checkpoints, metrics and reports are in
+  `output/teacher-risk-261006/risk/seed-0` and `risk/seed-1`; the overall
+  result is `risk/summary.json`. Read `docs/verification.md` for hashes.
+- Readiness establishes supervision availability only. Correction coverage
+  remains small and Risk labels are heavily imbalanced. Later epochs did
+  not improve the best validation loss. No final test evaluation, gate
+  calibration, Residual training or physical P trial was performed.
+  Next work is validation-based Risk assessment/calibration, additional
+  verified correction coverage if needed, then frozen-Risk Residual training
+  and paired B0/P evaluation. No grasp improvement or DDP result is claimed.

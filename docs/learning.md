@@ -389,7 +389,57 @@ size 64; see `docs/verification.md`.
 The actual launcher also passed a simultaneous one-epoch run on all three
 GPUs; the default 30-epoch run still requires the start command above.
 
-### General commands
+### Server background teacher-to-Risk workflow
+
+`scripts/teacher_risk_pipeline.py` chains collection, conversion, a separate
+dataset audit and independent Risk training seeds without requiring a desktop
+agent to stay online between stages. It uses host Python's standard library
+and the installed MUSA container. Start it once with a fresh output directory:
+
+```bash
+nohup python3 /home/group3/dl/scripts/teacher_risk_pipeline.py \
+  --out output/teacher-risk-261006 --teacher-gpu 4 \
+  > /home/group3/dl/output/teacher-risk-261006.log 2>&1 < /dev/null &
+```
+
+The indexed 69 successful parents supply 207 candidate pairs under the fixed
+three-perturbation configuration: 126 train, 39 val and 42 test. Candidate
+counts do not guarantee verified recovery targets. Teacher collection is
+serial, initially on physical GPU 4 if idle. It preserves completed rejected
+pairs as evidence. A collector exit code 1 caused by rejected individual pairs
+can advance only when its report proves every planned job finished. Pending
+or incomplete collection stops the workflow.
+
+After conversion, the independent audit must pass both Risk and Residual
+supervision availability before training begins. Thresholds stay fixed at
+`.06 .06 .1 .1`; no test data selects settings. If correction supervision is
+missing in train or val, the workflow records failure and does not launch
+final Risk training. Passing these gates remains an initial data pilot, not
+proof of enough independent examples or physical controller performance.
+
+At the training stage the workflow queries `mthreads-gmi` again and uses every
+device with zero memory use, zero utilization and no listed process. Each
+selected card trains one independent seed under the 30-epoch config; this is
+not DDP. It waits when no GPU is idle and leaves existing processes alone.
+Source and configuration hashes are checked before each stage. A global lock
+prevents duplicate pipeline launches. Use a fresh output directory for a new
+run; this wrapper does not automatically resume a failed run.
+
+The run directory contains `pairs/`, `dataset/`, `dataset-audit.json`, `risk/`,
+stage logs, GPU snapshots and an atomically updated `state.json`. The latter
+records parent/child PIDs, stage, teacher progress, source hashes and unique
+completion/failure events. The outer log is adjacent to the run directory.
+Risk seed folders contain the ordinary checkpoints and training reports.
+The multiseed launcher accepts an optional fourth argument selecting its
+fresh run directory; repository-relative paths cross the Docker mount safely.
+
+Codex monitoring checks the exact run state on a schedule and sends stage
+completion/failure notices through the authorized Outlook account. Local
+scheduled monitoring needs the desktop computer on and the app running;
+the detached server workflow continues when the local app is closed.
+The retired record-sync and general mail-queue automations remain paused.
+
+### Individual stage commands
 
 ```bash
 python -m unittest discover -s tests -v

@@ -1030,3 +1030,113 @@ their best validation losses were 0.1403171413, 0.1588276450 and
 0.1544478830. All three reports and `summary.json` passed. This proves the
 separate-container GPU mapping and launcher lifecycle; it is not one-model
 DDP, a 30-epoch experiment, or evidence of physical grasp improvement.
+
+## Background workflow preparation — 2026-10-06
+
+Read-only `pair_manifest` validation found 69 successful parent candidates,
+207 planned pairs (126 train, 39 val, 42 test), and no missing lower/lift saved
+references. The plan SHA-256 was
+`87ba1caa07cd46e810f0e3dd71cff69dbea8504bbf8b4ce9bdc9077f5dc09fe8`.
+This validation ran no physics and generated no new ARDY motion.
+
+The background workflow tests cover incomplete collection rejection,
+continuing from a completed collection containing rejected pairs, rejecting
+missing Risk/Residual supervision, excluding busy GPUs even when memory is
+zero, stage ordering, use of all idle GPUs, and host/container path mapping.
+All five passed locally. A real single-card launcher check on physical GPU 7
+also passed a full epoch and checkpoint writing with the explicit fresh
+output directory `output/pipeline-launch-check-261006`; best validation loss
+was 0.1403171413. Its outer log is
+`output/pipeline-launch-check-261006.log`. These checks do not establish that
+the forthcoming 207 candidates produce Residual-ready data.
+
+The five workflow tests also passed on the server in 0.006 seconds. The code
+was pushed as `0c2e00a` before starting the authorized background run at
+`output/teacher-risk-261006`. A post-disconnect process check verified parent
+PID/SID 1390625 with PPID 1 and the intended script/run arguments. The
+initial real collection report had seven of 207 candidates completed, two
+`recovery_verified` results and one rejected execution. The run state was
+healthy at the teacher stage. These partial counts are not a final success
+rate or proof of train/val correction coverage.
+
+The run's atomic `state.json`, `pairs/report.json` and `teacher.log` supplied
+the initial monitoring check. The existing heartbeat was updated and its
+saved configuration checked: ACTIVE, every 15 minutes, exact run validation,
+unique-event Outlook deduplication, failure detection and terminal cleanup.
+The connected Outlook profile confirmed `wentao_gu@outlook.com`. No completion
+email was due at setup because the run's stage-event list was still empty.
+
+## Completed teacher-to-Risk workflow — 2026-10-06
+
+The detached `output/teacher-risk-261006` workflow finished at
+2026-10-05 21:26:36 UTC. Its terminal `state.json` has the expected
+`dl-teacher-risk-pipeline-v1` schema/run identity and four completion events.
+The final Risk event is `DL-PIPELINE-teacher-risk-261006-4`.
+All 207 controlled teacher candidates were processed, with 48
+`recovery_verified`, 68 failed/rejected and zero pending. The collector's
+exit code 1 represents recorded individual rejections; its completed report
+allowed conversion. These counts do not measure recovery from general
+naturally failed states.
+
+Conversion and the separate Risk AND Residual availability audit passed:
+
+| Split | Windows | Risk positive | Risk negative | Censored | Correction | Stable identity |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Train | 53,485 | 50,119 | 3,296 | 70 | 28 | 1,686 |
+| Validation | 17,268 | 16,067 | 1,182 | 19 | 7 | 624 |
+| Test | 20,222 | 18,983 | 1,221 | 18 | 13 | 723 |
+
+Conversion skipped no source parents. Split ownership was fixed before
+window extraction and inherited by each teacher/perturbation branch.
+The converter's contributing parent-variant counts are 159/52/57; these
+are not counts of independent original episodes. Future-valid fractions
+are 0.99407544/0.99425961/0.99435021. Readiness validates the presence of
+supervision categories, not adequate independent sample size,
+generalization or learned-control performance. In particular, only seven
+validation windows have verified correction targets.
+
+Artifacts are `dataset/{manifest.json,report.json,train.npz,val.npz,test.npz}`,
+`pairs/report.json` and `dataset-audit.json` under this run.
+Manifest SHA-256:
+`2d07e2997be21366172a21e48c110e691f7035af7cd7e385bbf8fc79b78f0cd6`.
+Training config `configs/learning/p.json` SHA-256:
+`f30075eba4c91236cd21d4b0de867a887f163eeafcaca61debca5119f05382a2`.
+The exploratory tracking thresholds stayed `.06 .06 .1 .1`.
+
+The launch-time availability check selected physical GPUs 2 and 3 while
+the other cards had active workloads. Two independent models completed
+the existing 30-epoch budget; this run did not use single-model DDP.
+Both reports record MUSA, PyTorch 2.9.1, NumPy 1.26.4, 3,227,812 parameters,
+batch size 64, 25,080 updates and `synthetic_inputs: false`.
+
+| Seed | Physical GPU | Epochs | Best validation loss | Best epoch | Training-loop seconds |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 0 | 2 | 30 | 0.086504668710737 | 3 | 1804.437194 |
+| 1 | 3 | 30 | 0.09981808388707823 | 3 | 1799.262290 |
+
+Per-seed evidence is `risk/seed-{0,1}/{report.json,metrics.json,best.pt,last.pt}`
+and `risk/seed-{0,1}.log`. Both reports and `risk/summary.json` passed.
+A read-only SHA-256 check of each actual best checkpoint matched its report:
+
+- Seed 0:
+  `c6d84c8992e9276f5f767b6d4a2cc9ba7047dad42b89bcd9e0842f7fdc781f7b`.
+- Seed 1:
+  `1cedad359bce3bf4571808d0202f7f8d436c3863eb3be5e94b9cf6db82daf68a`.
+
+The minima were independently located in each 30-entry `metrics.json`.
+Later epochs did not improve those validation minima. At epoch 30,
+validation losses were 0.1643692408/0.1633657932. The best checkpoint,
+rather than the last checkpoint, is the validation-selected artifact.
+The class imbalance, correlated windows and small correction coverage
+limit interpretation. No final test inference or gate calibration was
+performed. Training/audit reports record `physics_executed: false`;
+they establish offline supervision/training completion, not P grasp
+success. Residual training and paired physical B0/P evaluation remain
+outstanding. The source/threshold/split/checkpoint files were not changed
+during this completion check.
+
+The repository was clean at `b778f44` before this documentation update.
+Only measured completion facts and current handoff status were changed.
+Documentation consistency and `git diff --check` were checked before
+commit; model or physics reruns were unnecessary for this documentation
+update. Outputs and checkpoints remain outside Git.

@@ -8,7 +8,7 @@ gpu_csv="${1:-0,2,3}"
 data_path="${2:-output/dataset-261006-risk/manifest.json}"
 config_path="${3:-configs/learning/p.json}"
 if [[ "$gpu_csv" == --help || "$gpu_csv" == -h ]]; then
-  echo 'Usage: bash scripts/train_risk_multiseed.sh [GPU_IDS=0,2,3] [MANIFEST] [CONFIG]'
+  echo 'Usage: bash scripts/train_risk_multiseed.sh [GPU_IDS=0,2,3] [MANIFEST] [CONFIG] [FRESH_RUN_DIRECTORY]'
   exit 0
 fi
 if [[ ! "$gpu_csv" =~ ^[0-9]+(,[0-9]+)*$ || ! -f "$config_path" ]]; then
@@ -62,7 +62,7 @@ if [[ ! -f "$data_path" ]]; then
   echo "Dataset manifest does not exist: $data_path" >&2
   exit 1
 fi
-run_root="output/risk-multiseed-$(TZ=Asia/Shanghai date +%y%m%d-%H%M%S)"
+run_root="${4:-output/risk-multiseed-$(TZ=Asia/Shanghai date +%y%m%d-%H%M%S)}"
 mkdir "$run_root"
 python3 - "$run_root" "$data_path" "$config_path" "$gpu_csv" <<'PY'
 import hashlib, json, sys
