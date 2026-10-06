@@ -1140,3 +1140,41 @@ Only measured completion facts and current handoff status were changed.
 Documentation consistency and `git diff --check` were checked before
 commit; model or physics reruns were unnecessary for this documentation
 update. Outputs and checkpoints remain outside Git.
+
+
+## Risk quality interfaces and label diagnosis — 2026-10-06
+
+The full existing-container CPU regression command
+`python -m unittest discover -s tests -v` passed 133 tests with 3 skips
+in 6.164 seconds. The log is
+`output/risk-quality-261006-checks/tests.log`. It includes real compiled
+MuJoCo live/replay feature parity, nonlinear nominal zero-provider equality
+(including terminal hold and underrun), gate provenance rejection, direct
+recovery/censoring preservation and real tiny training-loop early stopping.
+These are interface/training tests, not physical G1 grasp results.
+
+Train/validation continuous-physics diagnosis checks every recorded 5 ms
+sample over the 280 ms label interval. Stable hold requires a successful
+source, full future, block clearance at least 5 cm, opposing finger forces
+above 0.01 N and no balance violation. There are 6,712/2,234 accepted
+train/validation windows from 35/12 original episodes. All currently carry
+a tracking-triggered intervention label. Normal stand arm medians are
+0.07343/0.07575 rad against the 0.06/0.06 defaults. No joint/unit/time bug
+was confirmed. The report is
+`output/risk-quality-261006-checks/label-diagnosis.json`.
+
+Stable train per-episode horizon-maximum p95 errors have across-episode
+p95 values 0.1378828, 0.1325193, 0.0506042 and 0.1198446 rad
+(left arm, right arm, torso, lower body). They support an exploratory
+train-fitted calibration rule; validation/task outcomes must check it.
+All 28/7 train/validation verified recovery decisions lose their short
+tracking/contact/balance proxy trigger with arm thresholds at least 0.10.
+Direct verified-recovery supervision must therefore remain intact.
+A tracking threshold alone cannot establish whether correction is useful.
+
+The P-only sparse nominal velocity plus correction derivative repair changes
+the baseline source hash. Old output evidence is preserved, old resume locks
+remain strict, and new teacher runs form a distinct source cohort. Future
+B0/P trials must use this shared current revision and matched requests.
+Validation metrics and bounded teacher pilot outcomes will be recorded when
+measured; no predictive advantage or grasp improvement is claimed here.

@@ -24,6 +24,19 @@ Processes:
         with self.assertRaises(ValueError):
             idle_gpus("Driver error")
 
+    def test_sub_megabyte_or_unavailable_process_memory_is_still_busy(self):
+        snapshot = """
+0    MTT S4000 |00000000:08:00.0 |0%    0MiB(49152MiB)
+2    MTT S4000 |00000000:0e:00.0 |0%    0MiB(49152MiB)
+3    MTT S4000 |00000000:11:00.0 |0%    0MiB(49152MiB)
+4    MTT S4000 |00000000:32:00.0 |0%    0MiB(49152MiB)
+Processes:
+0    1234    python    <1MiB
+2    2345    python    0.5MiB
+3    3456    python    N/A
+"""
+        self.assertEqual(idle_gpus(snapshot), [4])
+
     def test_completed_collection_can_include_rejected_pairs_but_not_pending_jobs(self):
         report = {"status": "complete", "pending_pairs": 0, "planned_pairs": 2,
                   "failed_pairs": 1, "jobs": {"a": {"status": "paired"}, "b": {"status": "failed"}}}

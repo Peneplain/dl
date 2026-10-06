@@ -466,3 +466,45 @@ the rule and threshold before testing. B1/B2/I1 use matched zero risk-feature
 slots; I2/I3/I4/P use scalar, body, body-time and learned features with the
 same decoder capacity. These are model/training interfaces, not completed
 comparison results.
+
+
+## Stepwise quality pilot
+
+Use `experiments.diagnose_labels` on train/validation only. Physically stable
+hold evidence checks the continuous 5 ms task stream, not just sampled labels.
+Fit exploratory tracking limits from train evidence and preserve verified
+same-state recovery, contact/balance labels and censored future masks. Do not
+select label thresholds to force class balance or tune them on test data.
+
+`experiments.evaluate_risk` exports raw validation probabilities, class/phase
+metrics, both-class PR/AP, clustered bootstrap intervals, auxiliary-head
+metrics and a separate current-proxy-negative future-onset comparison.
+The historical validation F1 grid/tie rule remains unchanged. Temperature
+reports do not produce runtime gates; controller loading rejects a scaled
+gate and mismatching validation-window hashes. Test evaluation requires a
+matching pre-frozen validation gate.
+
+The early-stopping pilot config preserves the original model and loss setup.
+Natural and balanced-intervention sampling must be compared as separate
+experiments. Every report records actual/budget epochs and the stopping reason.
+
+Start the bounded first stage on the host, detached by the operator:
+
+```bash
+python3 scripts/risk_quality_pipeline.py --out output/risk-quality-261006 --gpu 2
+```
+
+Its `state.json` contains source hashes, PID, child PID, logs and completion
+events. It evaluates the two old best checkpoints, generates 15 fresh parent
+rollouts, indexes their declared train/validation splits, and checks three
+teacher candidates. The terminal `pilot-review` status requires a measured
+review before expanding pairs, creating a fresh manifest and training. This
+command uses installed assets only. Never resume an old source-locked batch
+under changed baseline source or overwrite the old dataset/checkpoints.
+
+`experiments.run_policy` supports matched B0/P pilot requests with explicit
+scene seeds. P uses real current/past simulator feedback, the same causal
+nominal resampling as conversion, frozen Risk predictions and a matching
+Residual/gate. Compare the same requests/options under the same current
+control source; old dense-velocity replay outcomes are a separate cohort.
+The full proposal evaluation budget remains outstanding.

@@ -25,6 +25,26 @@ def load_checkpoint(path, *, kind, device="cpu"):
     return model, normalizer, checkpoint
 
 
+def validate_gate(calibration, risk_path, risk_meta):
+    """Reject gates whose probabilities do not match runtime's raw sigmoid."""
+    if (calibration.get("split") != "val"
+            or calibration.get("risk_sha256") != sha256(risk_path)
+            or calibration.get("dataset_manifest_sha256")
+            != risk_meta.get("dataset_manifest_sha256")):
+        raise ValueError("Gate must be calibrated on validation data for this risk checkpoint")
+    if (calibration.get("probability_transform", "raw_sigmoid") != "raw_sigmoid"
+            or calibration.get("temperature", 1.0) != 1.0):
+        raise ValueError("Runtime requires a raw_sigmoid gate with temperature 1")
+    validation_hash = calibration.get("validation_windows_sha256")
+    if (validation_hash is not None
+            and validation_hash != risk_meta.get("window_hashes", {}).get("val")):
+        raise ValueError("Gate validation windows differ from the risk checkpoint")
+    threshold = calibration.get("threshold")
+    if (isinstance(threshold, bool) or not isinstance(threshold, (int, float))
+            or not 0 <= threshold <= 1):
+        raise ValueError("Gate threshold must be a finite probability")
+
+
 def load_controller(risk_path, residual_path, calibration_path, *, device="cpu", no_gate=False,
                     method=None):
     import json
@@ -40,9 +60,7 @@ def load_controller(risk_path, residual_path, calibration_path, *, device="cpu",
            for key, value in normalizer.state_dict().items()):
         raise ValueError("Risk and residual normalization differ")
     calibration = json.loads(Path(calibration_path).read_text())
-    if (calibration.get("split") != "val" or calibration.get("risk_sha256") != sha256(risk_path)
-            or calibration.get("dataset_manifest_sha256") != meta["dataset_manifest_sha256"]):
-        raise ValueError("Gate must be calibrated on validation data for this risk checkpoint")
+    validate_gate(calibration, risk_path, risk_meta)
     if meta.get("synthetic_inputs") or calibration.get("synthetic_inputs"):
         raise ValueError("Synthetic checkpoints cannot be loaded as physical task controllers")
     method = method or meta["interface"]

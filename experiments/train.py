@@ -24,6 +24,67 @@ from risk_residual.losses import residual_loss, risk_loss
 from risk_residual.models import ResidualModel, RiskModel, freeze_risk, risk_features
 
 
+class EarlyStopping:
+    """Optional validation-only stopping; best checkpoint still uses exact val_loss.
+
+    This controls the actual number of epochs, not model architecture or loss.
+    A positive min_delta affects patience only, never the best.pt selection rule.
+    """
+
+    def __init__(self, settings=None):
+        settings = {} if settings is None else settings
+        if not isinstance(settings, dict) or set(settings) - {"patience", "min_delta", "monitor"}:
+            raise ValueError("Invalid early_stopping fields")
+        self.enabled = bool(settings)
+        self.patience = settings.get("patience", 0)
+        self.min_delta = settings.get("min_delta", 0.)
+        self.monitor = settings.get("monitor", "val_loss")
+        if self.enabled and (not isinstance(self.patience, int) or isinstance(self.patience, bool)
+                             or self.patience < 1 or not np.isfinite(self.min_delta) or self.min_delta < 0
+                             or self.monitor not in {"val_loss", "val_intervention"}):
+            raise ValueError("Early stopping needs positive patience, finite nonnegative delta, and validation monitor")
+        self.best = float("inf")
+        self.bad_epochs = 0
+
+    def update(self, metrics):
+        if not self.enabled:
+            return False
+        value = (metrics["val_loss"] if self.monitor == "val_loss"
+                 else metrics["val_components"]["intervention"])
+        if not np.isfinite(value):
+            raise FloatingPointError("Nonfinite early stopping monitor")
+        if value < self.best - self.min_delta:
+            self.best, self.bad_epochs = value, 0
+        else:
+            self.bad_epochs += 1
+        return self.bad_epochs >= self.patience
+
+
+def balanced_intervention_weights(arrays):
+    """Equal expected Risk class mass, fitted on TRAIN labels only.
+
+    Censored negatives receive zero sampling mass, so their auxiliary labels are
+    omitted by this explicitly optional ablation. Epoch sample count remains the
+    full original training count to preserve the planned optimizer budget.
+    """
+    valid, labels = np.asarray(arrays["intervention_valid"]), np.asarray(arrays["intervention_target"])
+    if valid.dtype != np.bool_ or labels.shape != valid.shape or valid.ndim != 1:
+        raise ValueError("Invalid intervention sampling arrays")
+    if not np.isin(labels[valid], [0, 1]).all():
+        raise ValueError("Sampling requires binary available labels")
+    positive, negative = valid & (labels == 1), valid & (labels == 0)
+    if not positive.any() or not negative.any():
+        raise ValueError("Balanced Risk sampling requires both TRAIN classes")
+    weights = np.zeros(len(valid), np.float64)
+    weights[positive] = .5 / positive.sum()
+    weights[negative] = .5 / negative.sum()
+    return weights, {"mode": "balanced_intervention", "fit_split": "train", "replacement": True,
+                     "positive_windows": int(positive.sum()), "negative_windows": int(negative.sum()),
+                     "excluded_censored": int((~valid).sum()), "samples_per_epoch": len(valid),
+                     "validation_distribution": "unchanged natural validation windows",
+                     "note": "Window balancing is not an increase in independent episodes."}
+
+
 def reduction_counts(stage, batch):
     """Aggregate validation by supervised elements/sets, independent of batch partition."""
     if stage == "risk":
@@ -43,6 +104,12 @@ def train(args):
     settings = json.loads(args.config.read_text())
     config = ModelConfig(**settings["model"])
     budget = settings["training"]
+    early_stop = EarlyStopping(budget.get("early_stopping"))
+    sampling_mode = budget.get("risk_sampling", "natural")
+    if sampling_mode not in {"natural", "balanced_intervention"}:
+        raise ValueError("risk_sampling must be natural or balanced_intervention")
+    if args.stage != "risk" and (sampling_mode != "natural" or early_stop.monitor == "val_intervention"):
+        raise ValueError("Risk-specific sampling/monitor cannot be used for residual training")
     if (budget["epochs"] < 1 or budget["batch_size"] < 1
             or not 0 < budget["correction_fraction"] < 1
             or any(not np.isfinite(budget[key]) or budget[key] < 0 for key in
@@ -86,6 +153,11 @@ def train(args):
     sampler = None
     training = train_data
     validation = val_data
+    sampling_report = {"mode": "natural", "fit_split": "train", "samples_per_epoch": len(train_data)}
+    if args.stage == "risk" and sampling_mode == "balanced_intervention":
+        weights, sampling_report = balanced_intervention_weights(train_data.arrays)
+        sampler = WeightedRandomSampler(torch.from_numpy(weights), len(train_data),
+                                         replacement=True, generator=generator)
     if args.stage == "residual":
         a = train_data.arrays
         selected = np.flatnonzero(a["correction_sample"] | a["stable_sample"])
@@ -123,9 +195,15 @@ def train(args):
         "parameters": sum(p.numel() for p in model.parameters()), "adapter_parameters": 0,
         "inference_inputs": ["history", "nominal", "context"],
         "loss_normalization": "risk: available elements; residual: arm squared norm/time/sample; smoothness: time-sum/sample",
+        "training_controls": {"risk_sampling": sampling_report,
+                              "early_stopping": {"enabled": early_stop.enabled, "patience": early_stop.patience,
+                                                 "min_delta": early_stop.min_delta, "monitor": early_stop.monitor},
+                              "budget_epochs": budget["epochs"],
+                              "checkpoint_selection": "exact minimum total validation loss"},
     }
     history = []
     best = float("inf")
+    best_epoch = 0
     updates = 0
     start = time.perf_counter()
     for epoch in range(budget["epochs"]):
@@ -173,10 +251,16 @@ def train(args):
         torch.save(checkpoint, args.out / "last.pt")
         if metrics["val_loss"] < best:
             best = metrics["val_loss"]
+            best_epoch = epoch + 1
             torch.save(checkpoint, args.out / "best.pt")
         write_json(args.out / "metrics.json", history)
+        if early_stop.update(metrics):
+            break
     synchronize(device)
-    return {**provenance, "status": "passed", "epochs": budget["epochs"], "updates": updates,
+    return {**provenance, "status": "passed", "epochs": len(history), "actual_epochs": len(history),
+            "budget_epochs": budget["epochs"], "stopped_early": len(history) < budget["epochs"],
+            "stop_reason": "validation_patience" if len(history) < budget["epochs"] else "fixed_budget_completed",
+            "best_epoch": best_epoch, "updates": updates,
             "wall_seconds": time.perf_counter() - start, "best_val_loss": best,
             "best_sha256": sha256(args.out / "best.pt"),
             "physics_executed": False, "task_success": None}

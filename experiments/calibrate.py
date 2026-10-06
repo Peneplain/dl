@@ -5,13 +5,8 @@ import json
 from pathlib import Path
 
 import numpy as np
-import torch
-from torch.utils.data import DataLoader
-
 from baseline.common import sha256
 from baseline.runtime import device_for
-from risk_residual.checkpoints import load_checkpoint
-from risk_residual.data import WindowDataset
 
 
 def select_threshold(probability, labels):
@@ -40,27 +35,25 @@ def main():
     parser.add_argument("--data", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--device", default="musa")
+    parser.add_argument("--allow-synthetic", action="store_true")
+    parser.add_argument("--temperature-report", action="store_true",
+                        help="Report validation temperature fit only; the frozen gate remains raw sigmoid")
     args = parser.parse_args()
     if args.out.exists():
         parser.error("Choose a fresh output file")
-    device = device_for(args.device)
-    model, normalizer, meta = load_checkpoint(args.risk, kind="risk", device=device)
-    if meta["dataset_manifest_sha256"] != sha256(args.data):
-        raise ValueError("Calibration manifest differs from risk training")
-    data = WindowDataset(args.data, "val", model.config)
-    if meta["window_hashes"]["val"] != sha256(data.path):
-        raise ValueError("Validation windows changed since risk training")
-    probabilities, labels = [], []
-    with torch.inference_mode():
-        for batch in DataLoader(data, batch_size=64):
-            batch = {key: value.to(device) for key, value in batch.items()}
-            output = model(**normalizer(batch))
-            valid = batch["intervention_valid"]
-            probabilities.extend(output.probability[valid].cpu().tolist())
-            labels.extend(batch["intervention_target"][valid].cpu().tolist())
+    # Local import avoids a module cycle: the evaluator reuses select_threshold.
+    from experiments.evaluate_risk import fit_temperature, infer_checkpoint
+    predictions, meta = infer_checkpoint(args.risk, args.data, device=device_for(args.device),
+                                         allow_synthetic=args.allow_synthetic)
+    valid = predictions["intervention_valid"]
+    probabilities = predictions["probability"][valid]
+    labels = predictions["intervention_target"][valid]
     result = dict(select_threshold(probabilities, labels), split="val", risk_sha256=sha256(args.risk),
                   dataset_manifest_sha256=sha256(args.data), validation_windows=len(labels),
-                  synthetic_inputs=bool(meta["synthetic_inputs"]))
+                  validation_windows_sha256=meta["validation_windows_sha256"],
+                  synthetic_inputs=bool(meta["synthetic_inputs"]), probability_transform="raw_sigmoid", temperature=1.)
+    if args.temperature_report:
+        result["temperature_diagnostic"] = fit_temperature(predictions["intervention_logit"][valid], labels)
     # Exclusive creation preserves the validation-freeze boundary.
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("x") as handle:

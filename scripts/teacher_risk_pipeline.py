@@ -38,7 +38,9 @@ def idle_gpus(snapshot):
     if not rows:
         raise ValueError("Unrecognized mthreads-gmi output; cannot choose GPUs safely")
     processes = snapshot.split("Processes:", 1)[-1] if "Processes:" in snapshot else ""
-    busy = {int(x) for x in re.findall(r"^\s*(\d+)\s+\d+\s+.+\s+\d+MiB\s*$",
+    # Driver rows can report <1MiB, decimal values or unavailable memory.
+    # A listed PID occupies the device regardless of its memory formatting.
+    busy = {int(x) for x in re.findall(r"^\s*(\d+)\s+\d+\s+\S",
                                       processes, re.MULTILINE)}
     return [int(index) for index, utilization, memory in rows
             if int(utilization) == 0 and int(memory) == 0 and int(index) not in busy]

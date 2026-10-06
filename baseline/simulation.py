@@ -345,7 +345,13 @@ class SonicSimulation:
         desired = self.correction_provider.request(self, dense)
         checked = self.reference_checks.apply(dense, desired)
         slots = np.arange(count) * self.policy.future_step
-        return checked.joint_pos[slots], checked.velocities()[slots], checked.body_quat[slots]
+        # Preserve B0's nominal velocity convention exactly. Re-differentiating
+        # the entire dense reference changes sparse SONIC velocities even for
+        # a zero correction. Only the checked correction contributes an extra
+        # derivative, including the shared ramp and joint-limit clipping.
+        offset = checked.joint_pos - dense.joint_pos
+        offset_velocity = np.gradient(offset, dense.times, axis=0).astype(np.float32)
+        return checked.joint_pos[slots], v + offset_velocity[slots], checked.body_quat[slots]
 
     def _write_nominal_context(self, positions, velocities, quaternions):
         """Persist the causal P input tuple at the SONIC control clock.

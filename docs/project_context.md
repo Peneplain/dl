@@ -262,3 +262,43 @@ private session text or restricted robot data.
   Next work is validation-based Risk assessment/calibration, additional
   verified correction coverage if needed, then frozen-Risk Residual training
   and paired B0/P evaluation. No grasp improvement or DDP result is claimed.
+
+
+## Risk quality work in progress — 2026-10-06
+
+- The user authorized stepwise label diagnosis, validation/gate metrics,
+  overfitting controls, independent teacher coverage, frozen-Risk Residual
+  training and a paired B0/P pilot. Three implementation/review agents were
+  used; long jobs use atomic state and a thread heartbeat.
+- Train/validation-only diagnosis found no confirmed unit, joint-mapping or
+  time-alignment error. Continuous 5 ms physics evidence identifies 6,712
+  train and 2,234 validation stable hold windows from 35/12 original episodes.
+  Every one currently triggers the tracking proxy. Standing arm medians
+  0.07343/0.07575 rad exceed the exploratory 0.06 rad thresholds.
+- The diagnostic report is `output/risk-quality-261006-checks/label-diagnosis.json`.
+  Repeated pair clean replays are correlated; parent variants are not new
+  independent episodes. Verified recovery labels must remain positive even
+  when tracking/contact/balance short-horizon proxies do not trigger.
+- `experiments/evaluate_risk.py` now exports masked class metrics, both-class
+  PR/AP, phase/body summaries, clustered intervals and a current-state
+  comparator with a separate future-onset subset. Thresholds are selected
+  on validation only. Temperature fitting remains a diagnostic; runtime
+  requires raw sigmoid and temperature 1 with matching validation hashes.
+- `configs/learning/risk-quality-pilot.json` changes only early stopping
+  (patience 5) while preserving architecture, losses, natural sampling and
+  the maximum 30-epoch budget. Balanced intervention sampling is a separate
+  optional experiment, not an automatic simultaneous change.
+- A fairness bug was fixed in the P reference path: preserve the B0 sparse
+  nominal velocity and add only the checked correction derivative. A zero
+  provider now preserves nominal SONIC position/velocity/quaternion inputs.
+  Old dense-velocity teacher replay results remain immutable and belong to
+  the previous control-source cohort; they do not prove current P performance.
+  The baseline source hash changed, so do not bypass old batch resume locks.
+- `scripts/risk_quality_pipeline.py` runs old Risk seeds 0/1 validation,
+  then 10 train and 5 validation parents at fresh scene seeds 12000–12004,
+  13000–13004 and 22000–22004, followed by at most three initial teacher
+  candidates. It stops at a measured pilot-review gate. New teacher plans
+  record current source hashes. No new test scenes are collected.
+- Server regression: 133 tests passed with 3 skips; real compiled MuJoCo
+  feedback parity and zero-provider B0/P equality passed. No new Risk,
+  Residual or physical P outcome is yet established by these code tests.

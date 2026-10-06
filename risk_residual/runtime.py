@@ -1,12 +1,15 @@
 """Selective inference and adapter for the SHARED baseline executor."""
 
 import time
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
 import torch
 
-from risk_residual.config import CONTEXT_DIM, NOMINAL_DIM, STATE_DIM
+from baseline.adapters.reference import ReferenceSequence
+from baseline.runtime import synchronize
+from risk_residual.config import CONTEXT_DIM, NOMINAL_DIM, PHASES, STATE_DIM
 from risk_residual.models import risk_features
 
 
@@ -36,21 +39,26 @@ class InferenceWindow:
 
 class PredictiveController:
     """No teacher/labels at inference. Low risk does not call the residual at all."""
-    def __init__(self, risk, residual, normalizer, *, threshold, interface="P", no_gate=False):
+    def __init__(self, risk, residual, normalizer, *, threshold, interface="P", no_gate=False,
+                 temperature=1.0):
         if not np.isfinite(threshold) or not 0 <= threshold <= 1:
             raise ValueError("Gate threshold must be a validation-selected probability")
         if interface not in {"B1", "B2", "I1", "I2", "I3", "I4", "P", "pooled"}:
             raise ValueError("Unknown interface")
+        if not np.isfinite(temperature) or temperature <= 0:
+            raise ValueError("Calibration temperature must be positive and finite")
         if risk.config != residual.config:
             raise ValueError("Risk and residual model configurations differ")
         self.risk = risk.eval().requires_grad_(False)
         self.residual = residual.eval().requires_grad_(False)
         self.normalizer = normalizer.eval()
         self.threshold, self.interface, self.no_gate = threshold, interface, no_gate
+        self.temperature = float(temperature)
         self.config = risk.config
 
     @torch.inference_mode()
     def predict(self, window, *, reactive_trigger=None):
+        controller_start = time.perf_counter()
         window.validate(self.config)
         device = next(self.risk.parameters()).device
         if next(self.residual.parameters()).device != device:
@@ -58,11 +66,12 @@ class PredictiveController:
         batch = {key: torch.as_tensor(getattr(window, key), dtype=torch.float32,
                                       device=device)[None] for key in ("history", "nominal", "context")}
         inputs = self.normalizer(batch)
+        synchronize(device)  # Exclude queued input preparation from model latency.
         probability, risk_ms, output = None, 0.0, None
         if self.interface not in {"B1", "B2"}:
             start = time.perf_counter()
             output = self.risk(**inputs)
-            probability = float(output.probability.item())  # synchronizes the score
+            probability = float((output.intervention_logit / self.temperature).sigmoid().item())
             risk_ms = (time.perf_counter() - start) * 1000
             if not np.isfinite(probability) or not torch.isfinite(output.tokens).all():
                 raise ValueError("Nonfinite risk output")
@@ -81,7 +90,86 @@ class PredictiveController:
             if not np.isfinite(desired).all():
                 raise ValueError("Nonfinite residual output")
         return desired, {"probability": probability, "active": active,
-                             "risk_ms": risk_ms, "residual_ms": residual_ms}
+                         "risk_ms": risk_ms, "residual_ms": residual_ms,
+                         "controller_ms": (time.perf_counter() - controller_start) * 1000,
+                         "temperature": self.temperature}
+
+
+class SimulationHistoryBuilder:
+    """Read causal simulation feedback using the exact rollout-converter layout.
+
+    This observes the shared simulation; it does not advance physics or command
+    a robot. Contact zeros are measured absence, never substitute sensor values.
+    Future phase/finger context repeats the currently commanded values, matching
+    converter windows that exclude changing context. No future executed states,
+    evaluator outcomes, teacher references or labels are inputs.
+    """
+    def __init__(self, config):
+        self.config = config
+        self.reset()
+
+    def reset(self):
+        self.history = deque(maxlen=self.config.history_steps)
+
+    def __call__(self, simulation, risk_reference):
+        from scipy.spatial.transform import Rotation
+
+        model, data = simulation.model, simulation.data
+        now = float(data.time)
+        if not np.isclose(now, risk_reference.times[0], atol=1e-6, rtol=0):
+            raise ValueError("Observation and nominal clocks differ")
+        if self.history:
+            dt = now - self.history[-1][0]
+            if dt <= 0:
+                raise ValueError("Measured history clock must strictly increase")
+            if not np.isclose(dt, .02, atol=1e-6, rtol=0):
+                self.history.clear()
+                simulation.event("risk_history_gap", gap_seconds=dt, behavior="zero_during_warmup")
+        phase_name = simulation.task_phase.split("_replan_", 1)[0]
+        if phase_name not in PHASES:
+            raise ValueError("Unknown task phase for measured inference")
+        phase = np.eye(len(PHASES), dtype=np.float32)[PHASES.index(phase_name)]
+        block = int(model.joint("task_block_free").qposadr[0])
+        block_geom = int(model.geom("task_block_geom").id)
+        object_rotation = Rotation.from_quat(np.roll(data.qpos[block + 3:block + 7], -1))
+        relative, contacts = [], np.zeros(2, dtype=np.float32)
+        centers = (np.array([.125, -.035, 0.]), np.array([.125, .035, 0.]))
+        for index, (side, center) in enumerate(zip(("left", "right"), centers)):
+            body = int(model.body(f"{side}_wrist_yaw_link").id)
+            rotation = Rotation.from_matrix(data.xmat[body].reshape(3, 3))
+            palm = data.xpos[body] + rotation.apply(center)
+            xyz = rotation.inv().apply(data.qpos[block:block + 3] - palm)
+            quat = np.roll((rotation.inv() * object_rotation).as_quat(), 1)
+            relative.extend((*xyz, *quat))
+            for contact in data.contact[:data.ncon]:
+                if contact.dist > 0 or block_geom not in (contact.geom1, contact.geom2):
+                    continue
+                other = contact.geom2 if contact.geom1 == block_geom else contact.geom1
+                name = model.body(int(model.geom_bodyid[other])).name or ""
+                if name.startswith(f"{side}_hand_") or name == f"{side}_wrist_yaw_link":
+                    contacts[index] = 1
+                    break
+        positions = data.qpos[simulation.q_indices]
+        measured = np.concatenate((positions, data.qvel[simulation.v_indices],
+                                   data.qpos[simulation.root_q + 3:simulation.root_q + 7],
+                                   data.qvel[simulation.root_v + 3:simulation.root_v + 6],
+                                   relative, contacts,
+                                   np.abs(risk_reference.joint_pos[0] - positions), phase))
+        fingers = np.asarray(simulation.finger_target)
+        if (measured.shape != (STATE_DIM,) or fingers.shape != (14,)
+                or not np.isfinite(measured).all() or not np.isfinite(fingers).all()):
+            raise ValueError("Missing or nonfinite measured inference sensors")
+        self.history.append((now, measured.astype(np.float32)))
+        if len(self.history) < self.config.history_steps:
+            return None
+        nominal = np.concatenate((risk_reference.joint_pos, risk_reference.velocities(),
+                                  risk_reference.body_quat), axis=-1)
+        context = np.repeat(np.concatenate((phase, fingers))[None], self.config.horizon, axis=0)
+        window = InferenceWindow(now, np.asarray([row[0] for row in self.history]),
+                                 np.stack([row[1] for row in self.history]),
+                                 risk_reference.times.copy(), nominal, context.astype(np.float32))
+        window.validate(self.config)
+        return window
 
 
 class ReferenceCorrectionProvider:
@@ -112,7 +200,17 @@ class ReferenceCorrectionProvider:
     def request(self, simulation, nominal):
         now = float(nominal.times[0])
         # The builder is called EVERY 50 Hz tick so histories don't become 10 Hz histories.
-        risk_reference = nominal.sample(now + np.arange(8) * .04)
+        times = now + np.arange(self.controller.config.horizon) * .04
+        # The training converter reconstructs its nominal input from SONIC's
+        # logged sparse lookahead slots, then resamples on the Risk clock. Use
+        # those same uncorrected slots rather than a denser, unseen trajectory.
+        slots = getattr(simulation, "_nominal_lookahead", None)
+        if slots is None:
+            risk_reference = nominal.sample(times)
+        else:
+            positions, _, quaternions = slots
+            slot_times = now + np.arange(len(positions)) * simulation.policy.future_step * .02
+            risk_reference = ReferenceSequence(slot_times, positions, quaternions).sample(times)
         window = self.builder(simulation, risk_reference)
         if window is None:
             self.last_update = None
@@ -130,7 +228,11 @@ class ReferenceCorrectionProvider:
             self.plan_times = np.asarray(window.nominal_times).copy()
             self.last_update = now
             simulation.event("risk_residual", **report,
-                             desired_offset_norm=float(np.linalg.norm(self.plan[0])))
+                             desired_offset_norm=float(np.linalg.norm(self.plan[0])),
+                             history_start=float(window.history_times[0]),
+                             history_end=float(window.history_times[-1]),
+                             nominal_end=float(window.nominal_times[-1]),
+                             schema_version=2)
         desired = np.stack([np.interp(nominal.times, self.plan_times, self.plan[:, j],
                                       left=0, right=0) for j in range(29)], axis=-1)
         # Shared ReferenceChecks handles the ramp at the gate/horizon boundaries.
