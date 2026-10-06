@@ -37,8 +37,9 @@ private session text or restricted robot data.
   single-parent loader audit; see `docs/learning.md` and `docs/verification.md`.
   The final fixed-split dataset and two full 30-epoch Risk runs are now
   complete; see the latest completion handoff below. Arbitrary mid-episode
-  branching, general teacher recovery, Residual training and the P trial
-  entry point remain future work.
+  branching and general teacher recovery remain limited. Residual training
+  and the matched P trial entry point are implemented; new physical training
+  and evaluation outcomes remain to be measured.
 - The October 5 merge passed 78 server tests, pinned-asset/MUSA operator checks,
   baseline reference smoke and reduced-width synthetic Risk/Residual training
   on MUSA. An unprompted two-second B0 episode executed 100 SONIC frames in
@@ -302,3 +303,51 @@ private session text or restricted robot data.
 - Server regression: 133 tests passed with 3 skips; real compiled MuJoCo
   feedback parity and zero-provider B0/P equality passed. No new Risk,
   Residual or physical P outcome is yet established by these code tests.
+
+- The bounded run `output/risk-quality-261006` was launched detached at
+  2026-10-06 15:17:39 Asia/Shanghai with parent PID 1010421 and source
+  commit `9c382dc085531dfb6d9dc661ed1b2621b33fec97`. Old validation
+  completed at 15:18:45; the parent exit-code interruption and safe resume
+  are described below. State schema is
+  `dl-risk-quality-pipeline-v1`; monitoring checks every 15 minutes and
+  continues the authorized quality stages after measured gates.
+- Old seed 0/1 gates are 0.18/0.31, validation balanced accuracy
+  0.887097/0.891694, specificity 0.781726/0.792724. In 2,216
+  current-proxy-negative future-onset windows, recall is
+  0.932302/0.893617 and balanced accuracy 0.857014/0.843171.
+  Existing exploratory proxy labels still need physical calibration.
+
+
+## Quality workflow pause and authorized resume — 2026-10-06
+
+- The first quality run completed train-a seeds 12000–12004: 5/5 physical
+  trials, 2 successes (12002/12003), 2 timeouts (12000/12001) and 1 late
+  grasp loss (12004). All outcomes and source evidence are preserved in
+  `output/risk-quality-261006/parents/train-a/batch-261006-151846`.
+- The host runner stopped because B0 batch returns exit 1 for evaluated
+  task failures. That return code must be assessed together with the
+  complete per-attempt physics/SONIC reports; it is not proof of a broken
+  model load or simulation. Parent PID 1010421 and child 1014707 exited.
+- The user requested save/stop, then explicitly authorized continuing.
+  Local source/artifact archives and a server STOPPED-HANDOFF.md were saved.
+  Resume must preserve old events/state, verify input and evidence hashes,
+  and reuse valid old validation plus the completed five trials. An
+  explicit upgrade of only the runner's source pin requires the old Git
+  blob to match the previously recorded hash. Baseline/source locks remain
+  strict; incomplete or altered artifacts are rejected.
+- The reviewed follow-up code adds train-only exploratory label calibration
+  and the bounded continuation chain. Physical recovery and label-validation
+  gates precede fresh Risk/Residual training. Exact commands, source hashes,
+  budgets and model selection are recorded in `docs/learning.md`.
+- The repaired server suite passed 154 tests with 3 optional RGB skips in
+  6.289 seconds. Real saved train-a reports, fixed physical configuration,
+  phase prompts and every hashed episode output passed the reuse preflight.
+  Regression tests verify validation/train-a reuse without duplicate trials,
+  Git-verified runner upgrade, active-PID rejection and unchanged evidence.
+- The train-only calibration artifact is frozen at
+  `output/risk-quality-261006-checks/label-calibration.json`, SHA-256
+  `b6f2be232e9c6d0850a0ed6035fd36e6a8699cd11de6962f5645528b61fbe1bf`.
+  It proposes `.14 .14 .10 .12`, writes no labels and uses no test evidence.
+  The continuation must audit the rebuilt dataset and satisfy its physical
+  evidence gates before starting Risk and Residual training. Use the exact
+  run's `state.json` for current stage/PID rather than the original launch PID.

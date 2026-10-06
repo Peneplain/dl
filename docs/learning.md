@@ -508,3 +508,61 @@ nominal resampling as conversion, frozen Risk predictions and a matching
 Residual/gate. Compare the same requests/options under the same current
 control source; old dense-velocity replay outcomes are a separate cohort.
 The full proposal evaluation budget remains outstanding.
+
+### Frozen exploratory label calibration and continuation
+
+`experiments.calibrate_labels` derives a candidate from the train diagnosis
+only: each body's across-original-episode p95 of per-episode p95 maximum
+horizon error, rounded upward to .01 rad and floored at the old threshold.
+The current evidence gives `[.14,.14,.10,.12]`. This is an exploratory
+proxy calibration, not intervention ground truth. Its artifact pins the
+diagnosis, original manifest/source plan and calibrator code. Validation
+statistics do not select the values; test is not used.
+
+```bash
+python -m experiments.calibrate_labels \
+  --diagnosis output/risk-quality-261006-checks/label-diagnosis.json \
+  --expected-diagnosis-sha256 33c9a6798272a28382a3fffabf2c645bbfbea8f767ce3e0a935fb4173829a649 \
+  --out output/risk-quality-261006-checks/label-calibration.json
+```
+
+After terminal first-stage pilot review, the separately tested continuation
+uses the same bounded teacher plan, preserves source cohorts and prior
+evidence, and requires independent added recovery parents in train and val.
+It validates the frozen candidate on continuous physical hold evidence
+before training; a validation hold tracking-positive fraction above 10%
+stops the stage rather than retuning on held-out data.
+
+```bash
+python3 scripts/risk_quality_continue.py \
+  --first output/risk-quality-261006 \
+  --calibration output/risk-quality-261006-checks/label-calibration.json \
+  --diagnosis output/risk-quality-261006-checks/label-diagnosis.json \
+  --out output/risk-quality-next-261006
+```
+
+Two independent Risk seeds use the early-stopping pilot config; choose the
+lowest best total validation loss (ties: lower seed), then its raw
+validation max-F1 gate. One supervised P Residual seed uses the original
+`p.json` budget and the matching frozen Risk/manifest. Three matched
+B0/P validation-family trials are an integration pilot, not the proposal's
+20-pair, multiple-condition, three-seed evaluation. Report low correction
+coverage, unobserved balance positives and narrow perturbation recovery
+limits rather than treating availability checks as performance proof.
+
+### Safely resuming the interrupted first stage
+
+After the corrected runner and tests are deployed, the saved failed run uses:
+
+```bash
+python3 scripts/risk_quality_pipeline.py --resume \
+  --out output/risk-quality-261006 --gpu 2
+```
+
+Use the explicit resume mode for this existing run. It validates the prior
+terminal state, dead processes, source provenance and completed artifacts;
+backs up the previous state and records an artifact receipt; and reuses
+completed validation and parent trials. It rejects incomplete existing
+stage directories and changes to frozen baseline/collector inputs.
+Parent task failures can return exit 1, accepted only when all five actual
+reports establish completed physics and SONIC execution.

@@ -1178,3 +1178,63 @@ remain strict, and new teacher runs form a distinct source cohort. Future
 B0/P trials must use this shared current revision and matched requests.
 Validation metrics and bounded teacher pilot outcomes will be recorded when
 measured; no predictive advantage or grasp improvement is claimed here.
+
+
+### Old checkpoint validation, quality run stage 1
+
+`output/risk-quality-261006/old-risk/seed-{0,1}/report.json` contains
+validation-only assessment of both unchanged epoch-3 best checkpoints:
+
+| Seed | Raw gate | Recall | False-positive rate | Specificity | Balanced accuracy | Low-risk AP |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 0.18 | 0.992469 | 0.218274 | 0.781726 | 0.887097 | 0.925023 |
+| 1 | 0.31 | 0.990664 | 0.207276 | 0.792724 | 0.891694 | 0.914225 |
+
+The current-proxy-negative future-onset subset has 2,216 available windows
+(1,034 positive, 1,182 negative) from 40 prompt/scene episode clusters.
+Seed 0/1 recall is 0.932302/0.893617 and balanced accuracy
+0.857014/0.843171 at the same frozen raw gates. A current-proxy-only
+reactive comparator cannot detect those later onsets (recall 0, specificity 1).
+This isolates predictive proxy evidence; it does not validate intervention
+usefulness or grasp improvement. Overall old-label positives are already
+current-proxy-positive in 15,031/16,067 windows, so overall accuracy/F1
+alone cannot establish advance prediction. The test split was not evaluated.
+
+### Quality runner repair and bounded continuation
+
+The original first-stage parent collector completed all five train-a physical
+trials at seeds 12000–12004: two successes (12002/12003), two timeouts and
+one late grasp loss. Its batch exit code 1 represents evaluated task failures.
+The host runner incorrectly treated this as an execution failure and stopped.
+The reports remain immutable at
+`output/risk-quality-261006/parents/train-a/batch-261006-151846`.
+
+The repaired runner accepts exit codes 0/1 only with five complete, matching
+physics/SONIC reports and verified episode hashes. Its explicit `--resume`
+checks dead recorded processes, all pinned inputs, saved validation predictions,
+fixed physical configuration and phase prompts before modifying state. A
+changed runner is permitted only when the old hash matches its recorded Git
+blob and the new reviewed source is committed. It backs up previous state and
+an artifact-hash receipt, then reuses old validation and train-a. Partial later
+stages and changes to frozen baseline/data inputs are rejected.
+
+The server full-container CPU suite passed **154 tests with 3 optional RGB
+skips in 6.289 seconds**. Log:
+`output/risk-quality-261006-resume-checks/tests.log`. The nine runner regression
+tests cover safe reuse without duplicate execution, actual-report/config/hash
+mutation rejection, Git source upgrade and active-PID rejection. Eight
+continuation tests cover pair evidence, split/cohort preservation, exclusive
+first-run consumption, training selection and validation stop gates. Six
+calibration tests cover the train-only rule, sufficient independent episodes,
+input provenance and output overwrite rejection. Actual saved server evidence
+also passed `QualityPipeline.preflight_existing` and `checked_batch`.
+
+The frozen server calibration artifact is
+`output/risk-quality-261006-checks/label-calibration.json` (SHA-256
+`b6f2be232e9c6d0850a0ed6035fd36e6a8699cd11de6962f5645528b61fbe1bf`).
+It derives `.14 .14 .10 .12` from the existing continuous train diagnosis,
+uses no test evidence and changes no dataset labels. The bounded continuation
+requires new independent train/validation recoveries, retained prior direct
+corrections and a validation stable-hold tracking-positive fraction at most
+10% before fresh Risk training. These checks establish executable tooling;
+they are not new recovery, Residual or P grasp-performance results.
