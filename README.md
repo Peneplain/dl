@@ -2,9 +2,11 @@
 
 HKU DASC 7606C Deep Learning · Track 4, Group 3
 
-The project compares a frozen ARDY–SONIC baseline with the same system augmented
-by predictive risk and arm-reference residuals, entirely in G1 simulation.
-The full research scope is described in the [proposal source](docs/proposal.tex).
+The project provides a common G1 simulation harness for a frozen ARDY–SONIC
+baseline (B0), a frozen Kimodo comparator (K0), and the proposal system (P),
+which augments B0 with predictive risk and arm-reference residuals. All task
+data, evaluation and demonstrations come from simulation. The full research
+scope is described in the [proposal source](docs/proposal.tex).
 
 The proposal is user-frozen at its original approved version. Implementation
 updates and verification evidence belong in this README and the other documents,
@@ -17,17 +19,20 @@ implementation addition, not an amendment to the original B0/P research scope.
 
 ## Architecture
 
-The two systems below follow the [project proposal](docs/proposal.tex). They
-share text grounding, pose constraints, hand control, reference checks, frozen
-ARDY and SONIC checkpoints, and the same MuJoCo scene. The diagrams describe
-the intended system; implementation status is listed separately below.
+The three execution variants below share text grounding, pose constraints,
+hand control, reference checks, the frozen SONIC controller and the same MuJoCo
+scene. B0 is the frozen ARDY–SONIC baseline, K0 is the separately pinned frozen
+Kimodo comparator, and P adds the proposal's learned Risk + Residual correction
+to B0. The diagrams describe the system boundaries; implementation status is
+listed separately below.
 
 A shared task sequencer turns language and simulator object poses into task
-phases, wrist goals and standing constraints. ARDY receives text, constraints
-and pose history. Its output is decoded, mapped into SONIC joint order and
-resampled into nominal references: 29 body-joint positions and velocities,
-body orientation and aligned frame indices. The study uses privileged simulator
-state for grounding; camera perception is deferred.
+phases, wrist goals and standing constraints. In B0 and P, ARDY receives text,
+constraints and pose history; its output is decoded, mapped into SONIC joint
+order and resampled into nominal references: 29 body-joint positions and
+velocities, body orientation and aligned frame indices. K0 substitutes Kimodo
+as the frozen motion generator. The study uses privileged simulator state for
+grounding; camera perception is deferred.
 
 Blue blocks contain frozen models, orange blocks are the learned Risk and
 Residual models, and green is the simulator. Solid arrows carry references,
@@ -101,6 +106,9 @@ for an explicit source-only package.
 
 ```mermaid
 flowchart TB
+    G -.->|History S| R
+    G -.->|History S| D
+
     Q["Language + task sequencer"] -->|Text + constraints| A["Frozen ARDY<br/>Reference adapter + buffer"]
     A -->|Future reference A| R["Risk model<br/>G(S, A)"]
     R -->|"p >= tau: risk tokens Z + score p"| D["Residual model<br/>R(S, A, Z) · Gated by p"]
@@ -112,10 +120,8 @@ flowchart TB
     Q --> H["Shared finger controller"]
     H -->|Hand control| G
 
-    G -.->|History S| R
-    G -.->|History S| D
-    linkStyle 10 stroke-dasharray: 5 5;
-    linkStyle 11 stroke-dasharray: 5 5;
+    linkStyle 0 stroke-dasharray:5 5;
+    linkStyle 1 stroke-dasharray:5 5;
 
     classDef shared fill:#f1f5f9,stroke:#94a3b8,color:#0f172a;
     classDef frozen fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a;
@@ -158,13 +164,17 @@ rates, not measured real-time performance.
 
 ## Planned comparisons and ablations
 
-The primary comparison will be **B0 versus P** under the same scene, frozen
-checkpoints, task interface, hand controller and evaluation protocol. Following
-the proposal, we will also run the intermediate controls and component
-ablations below. These are planned experiments, not reported results.
+The primary comparison remains **B0 versus P** under the same scene, frozen
+checkpoints, task interface, hand controller and evaluation protocol. **K0**
+is an additional exploratory comparison of a frozen Kimodo motion generator
+through the same shared execution stack; it is not part of the proposal's
+primary B0/P ablation set. Following the proposal, we will also run the
+intermediate controls and component ablations below. These are planned
+experiments, not reported results.
 
 | Experiment group | Planned comparisons |
 | --- | --- |
+| Frozen motion-generator comparator | K0: Kimodo + shared SONIC, checks, hand control and MuJoCo physics; report separately from proposal ablations |
 | Residual and gating controls | B1: always-on residual; B2: reactive gate; I1: predictive gate without risk features |
 | Risk representation | I2: scalar probability; I3: body-wise risks; I4: body–time risk map; P: structured learned tokens |
 | Component and loss ablations | Pooled tokens; no future-action input; no execution history; no auxiliary risk losses; no selective gate; no identity loss; no smoothness loss |
