@@ -11,7 +11,8 @@ from baseline.grasp import (GraspEvaluator, PHASES, DIRECT_START_PHASES, RIGHT_C
                             build_scene, phase_constraints, phase_prompt, wrist_pose,
                             ground_scene, approach_constraints, approach_state,
                             APPROACH_POSITION_TOLERANCE, SETTLE_HOLD_SECONDS,
-                            HOLD_PHASES, RIGHT_PRESHAPED, initial_body_reference, hand_alignment)
+                            HOLD_PHASES, RIGHT_PRESHAPED, initial_body_reference, hand_alignment,
+                            grasp_center_local)
 from baseline.simulation import SimulationStop, SonicSimulation
 
 
@@ -26,7 +27,7 @@ class ExecutionRuntime:
         self.service = None
         self.simulation = None
         self.model_load_failed = False
-        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ardy")
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="motion-generator")
         self.discard_input = lambda: None
 
     def ensure_simulation(self):
@@ -81,15 +82,28 @@ class ExecutionRuntime:
             self.simulation.sync_viewer()
 
     def ensure_service(self):
-        """Load ARDY and its text encoder on the generation worker thread."""
+        """Load exactly one selected frozen generator on the generation worker."""
         if self.service is None:
-            from baseline.ardy import ArdyService
             try:
-                self.service = ArdyService(self.args)
+                if getattr(self.args, "kimodo", False):
+                    from baseline.kimodo import KimodoService
+                    self.service = KimodoService(self.args)
+                else:
+                    from baseline.ardy import ArdyService
+                    self.service = ArdyService(self.args)
             except Exception:
                 self.model_load_failed = True
                 raise
         return self.service
+
+    @property
+    def method(self):
+        return "KIMODO" if getattr(self.args, "kimodo", False) else (
+            "reference_correction_pilot" if self.correction_provider is not None else "B0")
+
+    @property
+    def generator_name(self):
+        return "Kimodo" if getattr(self.args, "kimodo", False) else "ARDY"
 
     def preload(self):
         """Prepare all session models before accepting or executing prompts."""
@@ -99,11 +113,11 @@ class ExecutionRuntime:
         try:
             self.ensure_simulation()
             print("[LOAD] SONIC loaded; simulation initialized.", flush=True)
-            print("[LOAD] Loading frozen ARDY and text encoder; input disabled ...", flush=True)
+            print(f"[LOAD] Loading frozen {self.generator_name} and text encoder; input disabled ...", flush=True)
             self.run_worker(self.ensure_service, "LOAD")
             report["status"] = "ready"
             print("\n============================================================\n"
-                  "[READY] ALL MODELS LOADED: ARDY + text encoder + SONIC\n"
+                  f"[READY] ALL MODELS LOADED: {self.generator_name} + text encoder + SONIC\n"
                   "============================================================", flush=True)
         except BaseException as error:
             report.update(status="failed", error=f"{type(error).__name__}: {error}")
@@ -113,6 +127,18 @@ class ExecutionRuntime:
             write_json(self.session / "startup.json", report)
 
     def generate(self, *args, **kwargs):
+        # Both services expose the same generate contract. Kimodo accepts the
+        # shared pose-constraint dictionary and translates it at its boundary.
+        constraints = kwargs.get("pose_constraints")
+        if (getattr(self.args, "kimodo", False) and self.args.grasp
+                and isinstance(constraints, dict)
+                and constraints.get("kind", "wrist") in {"wrist", "wrist_pose"}):
+            # Carry the existing hand-center geometry across the generator
+            # boundary without mutating ARDY's common pose-goal dictionary.
+            kwargs["pose_constraints"] = {
+                **constraints,
+                "wrist_effector_offset_m": grasp_center_local(self.simulation).tolist(),
+            }
         return self.run_worker(lambda: self.ensure_service().generate(*args, **kwargs), "GENERATE")
 
     def run_worker(self, work, stage):
@@ -165,7 +191,7 @@ class ExecutionRuntime:
                                             wrist_offset=self.args.wrist_offset)
             prompt = request.get("phase_prompts", {}).get("lower") or phase_prompt(
                 request["prompt"], "lower", request["prompt_profile"])
-            reference_dir = output / "ardy" / phase
+            reference_dir = output / ("kimodo" if getattr(self.args, "kimodo", False) else "ardy") / phase
             report = self.generate(prompt, duration, (request["seed"] + phase_index + retry) % 2**32,
                                    reference_dir, history_qpos=simulation.history_qpos(self.args.history_frames),
                                    pose_constraints=constraints)
@@ -192,7 +218,7 @@ class ExecutionRuntime:
     def run(self, request, output, plan_hash):
         started = time.perf_counter()
         self.model_load_failed = False
-        method = "B0" if self.correction_provider is None else "reference_correction_pilot"
+        method = self.method
         final = {"schema_version": 2, "method": method, "status": "running", "stage": "initializing",
                  "request": request, "plan_sha256": plan_hash, "command": sys.argv,
                  "physics_executed": False, "sonic_executed": False,
@@ -315,7 +341,7 @@ class ExecutionRuntime:
                         raise ValueError("Saved reference changed after the request was recorded")
                     reference = simulation.load_reference(request["reference"])
                 else:
-                    reference_dir = output / "ardy" / phase
+                    reference_dir = output / ("kimodo" if getattr(self.args, "kimodo", False) else "ardy") / phase
                     report = self.generate(prompt, duration, (request["seed"] + phase_index) % 2**32,
                                            reference_dir, history_qpos=simulation.history_qpos(self.args.history_frames),
                                            pose_constraints=constraints)

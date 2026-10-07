@@ -140,3 +140,44 @@ required to run the B0 scripts.
 The 25 FPS ARDY sampling rate is a motion representation rate, not a measured
 generation throughput. Record text encoding, generation, transport and module
 latencies separately from simulation time and real-time factor.
+
+
+## 4. Optional Kimodo generator boundary
+
+Kimodo is a separate frozen generator option, not a second executor. The
+`--kimodo` selection is resolved in the shared execution runtime; ARDY remains
+the default and is not imported through the Kimodo path. `baseline/kimodo.py`
+loads the independently pinned source/checkpoint, reuses the local LLM2Vec text
+encoder contract, translates the shared MuJoCo constraint schema using the
+Kimodo converter's coordinate transform, and emits the same named-joint,
+wxyz-quaternion `ReferenceSequence` consumed by SONIC.
+
+Kimodo's native 30 Hz/36-column qpos is never assumed to have SONIC's order.
+The converter XML is checked for the exact 29 joint names, the reference is
+resampled to 50 Hz, and velocities are recomputed after resampling. The shared
+`SonicSimulation.install`, limit checks, timestamped buffer, underrun behavior,
+finger controller, dynamic block, free root and evaluator are then used without
+branch-specific physics. Kimodo does not receive future executed states;
+measured history is retained only for matched logging and current-state
+constraint anchoring.
+
+New K0 grasp plans record a method-specific wrist-target calibration
+`[0.125, 0.035, 0.080]` metres. The shared grounding algorithm is unchanged;
+ARDY's measured-site default and saved resume settings are preserved. This
+calibration was selected using exploratory physical trials, not validation or
+held-out evidence for the proposal's learned methods.
+
+Raw nominal output is the default. An explicit `--kimodo-project-constraints`
+option invokes static MuJoCo FK plus bounded seven-hinge right-arm fitting
+before shared conversion/checks. It preserves the other qpos fields, records
+raw/projected artifacts and solver/error metadata, and never steps physics,
+reads future executions, attaches the object or uses a teacher. Version 2
+fits the hand-center point with a soft orientation preference. Projection
+has only failed physical pilots and is excluded from the successful raw K0
+configuration.
+
+The canonical worker has the complete pinned source and checkpoint. Offline
+verification, MUSA model loading and text-to-motion execution passed. A full
+raw K0 tuning batch obtained 11/20 contact-grasp successes; final-source batch
+and ARDY regressions are recorded in `docs/verification.md`. Synthetic tests
+and execution-only checks remain distinct from physical task evidence.

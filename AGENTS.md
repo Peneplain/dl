@@ -21,6 +21,12 @@ implementation; keep it consistent with the proposal. Distinguish planned
 components from implemented and verified behavior. Record agreed design changes
 in the relevant documents instead of silently changing the experiment.
 
+`docs/proposal.tex` is user-frozen at its original approved version. Do not
+edit, reformat, or append implementation notes to it. Keep implementation
+status, exploratory Kimodo details, and verification evidence in `README.md`
+and the other documents. Only an explicit user request to revise the proposal
+permits changing it or its integrity test.
+
 The project studies text-driven tabletop block grasping with a simulated
 Unitree G1. Compare one frozen ARDY–SONIC baseline (B0) with the same system
 augmented by predictive Risk + Residual correction (P), followed by the

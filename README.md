@@ -6,6 +6,11 @@ The project compares a frozen ARDY–SONIC baseline with the same system augment
 by predictive risk and arm-reference residuals, entirely in G1 simulation.
 The full research scope is described in the [proposal source](docs/proposal.tex).
 
+The proposal is user-frozen at its original approved version. Implementation
+updates and verification evidence belong in this README and the other documents,
+not in the proposal. The optional Kimodo comparator below is an exploratory
+implementation addition, not an amendment to the original B0/P research scope.
+
 [Run commands](docs/commands.md) · [Setup details](docs/baseline.md) · [Integration notes](docs/integration.md) ·
 [Verification](docs/verification.md) · [B0 grasp batches](docs/grasp.md) ·
 [Learning status](docs/learning.md) · [Project context](docs/project_context.md)
@@ -56,6 +61,42 @@ closure, release and contact checks separately from body tracking. G1's root
 remains free, and lifting must result from frictional hand contacts with a
 dynamic block.
 
+
+### Kimodo control baseline (K0, optional)
+
+`--kimodo` selects the separately pinned, frozen Kimodo-G1-RP-v1 generator.
+K0 reuses batch/manual execution, phase prompts, simulator-state grounding,
+root/wrist constraints, reference checks, SONIC, articulated fingers, free-base
+MuJoCo physics, rollout logging, rendering and the evaluator. Omitting the flag
+preserves ARDY/B0, its defaults and its `ardy/` output layout.
+
+Kimodo exports named 36-column MuJoCo qpos at 30 Hz. The adapter remaps joints
+by name, preserves wxyz root quaternions, resamples references to 50 Hz and
+recomputes velocities. Executed history supplies current-state anchors and
+shared measured-pose transitions; Kimodo has no native ARDY-style history
+conditioning, and its reports explicitly record `history_conditioning=false`.
+
+The default Kimodo grasp uses an exploratory wrist-offset calibration of
+`0.125 0.035 0.080` metres. ARDY retains its measured hand-center default;
+`--wrist-offset` overrides either method explicitly. Raw Kimodo output is the
+default. `--kimodo-project-constraints` opts into an experimental bounded
+nominal right-arm projection, which has not demonstrated physical grasp
+success and is not used in the verified K0 batch. Neither path uses a teacher
+or learned Risk/Residual correction.
+
+The final-source 20-attempt simulation batch achieved **11/20 contact-grasp
+successes (55%; Wilson 95% interval 34.2%--74.2%)**. The earlier tuning batch
+also achieved 11/20 using the same seeds; these are not 40 independent trials.
+Failures, source hashes and ARDY regressions are recorded in
+`docs/verification.md`. This is exploratory task calibration, not held-out
+performance or a matched B0/P comparison.
+
+Kimodo source/weights are pinned separately in `configs/kimodo.lock.json`.
+They were downloaded on a connected machine, transferred with rsync and
+verified offline on the worker. The default B0 archive excludes Kimodo files;
+use `python scripts/package_baseline.py --scope kimodo --out output/kimodo-source.tar.gz`
+for an explicit source-only package.
+
 ### Proposed (P): risk-guided correction
 
 ```mermaid
@@ -73,6 +114,8 @@ flowchart TB
 
     G -.->|History S| R
     G -.->|History S| D
+    linkStyle 10 stroke-dasharray: 5 5;
+    linkStyle 11 stroke-dasharray: 5 5;
 
     classDef shared fill:#f1f5f9,stroke:#94a3b8,color:#0f172a;
     classDef frozen fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a;

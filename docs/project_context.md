@@ -48,6 +48,17 @@ private session text or restricted robot data.
   baseline reference smoke, one matched successful-clean/failed-perturbed
   simulation pair, and a single-parent loader audit. At that pilot stage,
   the available prompt groups did not support a leakage-free three-split dataset.
+- Optional frozen K0 is selected with `--kimodo`; ARDY/B0 stays the default
+  with unchanged generator, controller, physics and evaluator. Pinned Kimodo
+  assets are downloaded/transferred and offline-verified. New K0 grasp plans
+  default to raw output and the explicit wrist-target calibration
+  `[0.125, 0.035, 0.080]` metres; ARDY retains its measured-site default.
+  The final-source 20-attempt batch completed with 11/20 contact-grasp
+  successes (55%, Wilson 95% 34.2%--74.2%). These tuned seeds are not held-out
+  evaluation or paired B0/P evidence. Optional nominal projection remains
+  experimental and has no verified physical grasp success. Kimodo has no
+  native ARDY history conditioning; current-state anchors and transitions
+  are shared. See the October 7 final handoff and verification entry.
 - Real weights, large outputs, environments and upstream source checkouts stay
   outside Git. Use `output/` for fresh experiment artifacts.
 
@@ -351,3 +362,46 @@ private session text or restricted robot data.
   The continuation must audit the rebuilt dataset and satisfy its physical
   evidence gates before starting Risk and Residual training. Use the exact
   run's `state.json` for current stage/PID rather than the original launch PID.
+
+## Kimodo final-source grasp handoff — 2026-10-07
+
+- Canonical implementation remains `/home/group3/dl` on the worker. No older
+  local repository was copied over it. Downloaded pinned Kimodo source and
+  checkpoint were transferred with rsync; `./run.sh shell -c 'python
+  scripts/fetch_kimodo.py --offline'` passed with no network access required.
+- `./run.sh batch --kimodo --grasp --batch 20 --seed 0 --device musa:0
+  --text-device musa:0 --output-root output/kimodo-final-batch20-261007`
+  completed all seeds 0--19 at
+  `output/kimodo-final-batch20-261007/batch-261007-104935`. It uses 100 steps, guidance `[2,2]`, raw nominal
+  rotations and saved wrist offset `[0.125,0.035,0.080]` metres.
+- Final result: 11 successes, 5 alignment misses, 1 acquisition failure,
+  2 timeouts and 1 loss after the hold threshold. All attempts remain in the
+  denominator; loss-after-threshold is not counted as success. Successful
+  trials preserve free base, dynamic contact lift, final retention, opposing
+  fingers, the 5 cm/2 second/30 second evaluator and no teacher, learned
+  correction or additional user intervention.
+- The preceding raw `.08` calibration run also obtained 11/20 on these same
+  seeds; the raw `.04`, original and named-order-only 20-trial batches obtained
+  0/20. Failed projection and guidance pilots remain saved. Do not pool
+  repeated seeded trials or report a held-out or matched generator advantage.
+- Full server suite: 184 tests passed; clean staged-index snapshot: 173 tests
+  passed, both including RGB/MP4 tests. Fresh
+  synthetic reference smoke, baseline/MUSA checks and Kimodo offline asset
+  verification passed. Final batch source hashes match the current worktree.
+- A fresh default ARDY text-action regression passed and executed 229 SONIC
+  frames. Its separate seed-0 grasp trial completed the shared runtime with
+  no runtime error but timed out at 30 seconds; report it as a task failure.
+  `baseline/ardy.py`, shared grounding/fingers/physics and frozen assets have
+  no changes in this K0 work.
+- Three representative final-source trials passed offline rendering (3/3):
+  attempt 1 (alignment failure), attempt 2 (seed-1 success), and attempt 4
+  (seed-3 success), each with third-person and wrist cameras. Rendering is
+  replay evidence, not a new simulation or performance trial.
+- Default B0 source packaging excludes Kimodo files. Use `--scope kimodo`
+  for the explicit K0 package. Real weights, outputs and credentials remain
+  outside Git. Preserve unrelated uncommitted Risk/Residual continuation,
+  review and learning-document edits; only K0 changes belong in its commit.
+- Limitations: grasp tuning reused seeds 0--19, walking/grasp GUI validation
+  and held-out paired Kimodo evaluation are unfinished, native history
+  conditioning is absent, and optional arm projection has only failed pilots.
+  Follow `docs/verification.md` for exact commands, hashes and retained data.

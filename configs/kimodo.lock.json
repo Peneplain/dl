@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "source": {
+    "url": "https://github.com/nv-tlabs/kimodo.git",
+    "commit": "f12db15b33a3cfb4d4c1288d3b54ee7743a4255c"
+  },
+  "checkpoint": {
+    "repo_id": "nvidia/Kimodo-G1-RP-v1",
+    "revision": "3020ad8c419c244e0429d360163730c63c4ed011"
+  },
+  "model": "Kimodo-G1-RP-v1",
+  "source_fps": 30,
+  "max_frames": 300,
+  "qpos_width": 36
+}

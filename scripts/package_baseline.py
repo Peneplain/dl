@@ -24,15 +24,25 @@ BASELINE_TESTS = {
     "tests/test_sessions.py", "tests/test_simulation.py", "tests/test_text_encoder.py",
 }
 TOP_FILES.update(BASELINE_TESTS)
+KIMODO_FILES = {
+    "configs/kimodo.lock.json", "scripts/fetch_kimodo.py", "tests/test_kimodo.py",
+    "tests/test_kimodo_projection.py",
+}
 SOURCE_DIRS = {"baseline", "docker"}
 SUFFIXES = {".py", ".sh", ".yaml", ".yml", ".json", ".md", ".tex"}
 
 
-def source_files(root):
-    files = [root / name for name in sorted(TOP_FILES) if (root / name).is_file()]
+def source_files(root, scope="b0"):
+    if scope not in {"b0", "kimodo"}:
+        raise ValueError(f"Unknown packaging scope: {scope}")
+    top_files = set(TOP_FILES)
+    if scope == "kimodo":
+        top_files.update(KIMODO_FILES)
+    files = [root / name for name in sorted(top_files) if (root / name).is_file()]
     for directory in sorted(SOURCE_DIRS):
         files.extend(path for path in sorted((root / directory).rglob("*"))
                      if path.is_file() and path.suffix in SUFFIXES
+                     and (scope == "kimodo" or not path.relative_to(root).as_posix().startswith("baseline/kimodo"))
                      and (path.suffix != ".py" or path.stem.isidentifier())
                      and not any(part.startswith(".") or part == "__pycache__"
                                  for part in path.relative_to(root).parts))
@@ -45,6 +55,8 @@ def source_files(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True, help="Fresh .tar.gz path under output/")
+    parser.add_argument("--scope", choices=("b0", "kimodo"), default="b0",
+                        help="Explicit source scope; default is the declared B0 archive")
     args = parser.parse_args()
     if not args.out.name.endswith(".tar.gz"):
         parser.error("--out must end in .tar.gz")
@@ -53,21 +65,21 @@ def main():
     args.out.parent.mkdir(parents=True, exist_ok=True)
     manifest = {}
     with tarfile.open(args.out, "x:gz") as archive:
-        for path in source_files(ROOT):
+        for path in source_files(ROOT, args.scope):
             name = str(path.relative_to(ROOT))
             data = path.read_bytes()
             manifest[name] = hashlib.sha256(data).hexdigest()
-            info = tarfile.TarInfo("dl-b0/" + name)
+            info = tarfile.TarInfo("dl-" + args.scope + "/" + name)
             info.size = len(data)
             info.mode = 0o755 if path.suffix == ".sh" else 0o644
             archive.addfile(info, io.BytesIO(data))
         data = (json.dumps(manifest, indent=2) + "\n").encode()
-        info = tarfile.TarInfo("dl-b0/SOURCE_MANIFEST.json")
+        info = tarfile.TarInfo("dl-" + args.scope + "/SOURCE_MANIFEST.json")
         info.size = len(data)
         archive.addfile(info, io.BytesIO(data))
     digest = hashlib.sha256(args.out.read_bytes()).hexdigest()
     args.out.with_name(args.out.name + ".sha256").write_text(f"{digest}  {args.out.name}\n")
-    print(f"{args.out}: {len(manifest)} source files, SHA256 {digest}")
+    print(f"{args.out}: {len(manifest)} {args.scope} source files, SHA256 {digest}")
     print("No weights, datasets, upstream checkouts, environments, or run artifacts included.")
 
 

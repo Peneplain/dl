@@ -171,6 +171,50 @@ A 30-second, 640x480, 25 FPS raw RGB stream requires about 0.69 GB per camera.
 RGB is saved before MP4 encoding; encoder failures preserve completed RGB and
 write an error in the rendering report.
 
+## Selecting Kimodo instead of ARDY
+
+The same batch/manual commands can select the optional Kimodo baseline:
+
+```bash
+./run.sh batch --kimodo --prompt "A person slowly raises the right hand." --duration 2
+./run.sh batch --kimodo --grasp --batch 20 --seed 0 --device musa:0 --text-device musa:0
+./run.sh manual --kimodo --grasp --gui
+```
+
+`--kimodo` is the only method-selection flag. All task, grounding, finger,
+SONIC, MuJoCo and evaluation options remain shared. Outputs place generated
+references under `kimodo/` instead of `ardy/`, and reports identify the method
+as `KIMODO`. Omitting the flag preserves the existing ARDY/B0 behavior.
+For new Kimodo grasp sessions, the default wrist offset is
+`0.125 0.035 0.080` metres, and raw nominal output is used. This calibration
+is explicit in the saved plan and does not change the ARDY default. Supply
+`--wrist-offset X Y Z` for an override; resumed plans keep their saved values.
+`--kimodo-diffusion-steps` defaults to 100 and
+`--kimodo-constraint-guidance` to 2. The unvalidated
+`--kimodo-project-constraints` nominal projection is opt-in;
+`--kimodo-no-projection` remains a compatibility alias for the raw default.
+Do not interpret the tuned batch as held-out or paired B0/P evidence.
+Individual Kimodo clips are capped at 300 frames (10 seconds at 30 Hz);
+longer single generation requests fail explicitly before model inference.
+The shared batch CLI returns exit 1 if any attempt fails; inspect
+`summary.json` for completion, success counts and failure reasons.
+
+Kimodo generation requires the pinned source checkout and checkpoint:
+
+```bash
+python scripts/fetch_kimodo.py --only all
+# or after a manual transfer from a connected machine:
+python scripts/fetch_kimodo.py --offline
+```
+
+The fetch operation is intentionally separate from `fetch_baseline.py`. If the
+remote host cannot reach GitHub or Hugging Face, run it elsewhere and transfer:
+
+```bash
+rsync -a --progress third_party/kimodo/ user@host:/path/to/dl/third_party/kimodo/
+rsync -a --progress checkpoints/kimodo/ user@host:/path/to/dl/checkpoints/kimodo/
+```
+
 ## 2. Manual execution: one JSON request at a time
 
 ```bash

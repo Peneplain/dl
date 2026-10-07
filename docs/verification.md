@@ -1238,3 +1238,335 @@ requires new independent train/validation recoveries, retained prior direct
 corrections and a validation stable-hold tracking-positive fraction at most
 10% before fresh Risk training. These checks establish executable tooling;
 they are not new recovery, Residual or P grasp-performance results.
+
+### Kimodo generator integration verification — 2026-10-06
+
+The Kimodo work was applied in the canonical worker workspace
+`/home/group3/dl` on `group3@10.123.0.39`; the existing uncommitted
+Risk/Residual pilot files were preserved. The default ARDY/B0 path remains the
+default, while `batch --kimodo` and `manual --kimodo` select the lazy Kimodo
+generator and continue through the shared task sequencer, grounding, SONIC,
+reference checks, finger controller, physics and evaluator.
+
+The following checks passed on the worker with `/usr/bin/python3`:
+
+- `py_compile` passed for the Kimodo adapter, shared execution/session code,
+  CLI, fetcher and packaging entry points.
+- `python3 -m unittest tests.test_kimodo tests.test_sessions
+  tests.test_reference_timing tests.test_policy_runtime tests.test_baseline_bringup`
+  passed: **48 tests**.
+- `python3 scripts/fetch_kimodo.py --offline --only source` verified the
+  transferred source checkout at commit
+  `f12db15b33a3cfb4d4c1288d3b54ee7743a4255c`.
+- `python3 scripts/run.py batch --kimodo --plan-only --batch 1 ...` completed
+  successfully and produced a KIMODO plan without loading an upstream model.
+
+The final adapter hash is
+`6345d0af103e76ac37c5e9fcd8602272457d3733938e6d43011af044631d13a1`; the
+Kimodo lock hash is
+`0967bc7ae7a8fbe75d75e1521ac9976ce1eeb8ac564ed027337c6aae75201f8b`.
+The transferred source is about 122 MiB and is not a model checkpoint.
+
+The pinned `checkpoints/kimodo/` directory and its manifest are still absent.
+Consequently, `python3 scripts/fetch_kimodo.py --offline --only all` stops at
+checkpoint verification and reports the connected-machine download plus rsync
+procedure. No Kimodo checkpoint load, text-to-motion inference, SONIC tracking,
+MUSA compatibility check, contact grasp/lift trial or grasp-success result is
+claimed by this entry. Those checks remain pending until the pinned checkpoint
+is copied into the worker and verified offline.
+
+### Kimodo generator follow-up — checkpoint and MUSA execution evidence — 2026-10-06
+
+The previous Kimodo entry records the setup-only state at that time. It is
+superseded for asset and inference status by this follow-up; the earlier entry
+is retained as a historical record rather than silently rewritten. The canonical
+worker now contains the complete pinned Kimodo source and checkpoint:
+
+- source commit: `f12db15b33a3cfb4d4c1288d3b54ee7743a4255c`;
+- checkpoint: `nvidia/Kimodo-G1-RP-v1` at revision
+  `3020ad8c419c244e0429d360163730c63c4ed011`;
+- checkpoint manifest SHA-256:
+  `05bb01c2be7b94b3b3dcfdf8a7e43998b59e314cbef28f8c2b5335de3b48affa`;
+- `model.safetensors` size: 1,134,168,268 bytes;
+- current `baseline/kimodo.py` SHA-256:
+  `aff8129311d068f991f0bce91871233f99f9de326c0248a450f6cabde15d8e29`.
+
+`python3 scripts/fetch_kimodo.py --offline --only all` passed on the worker
+without network access. The existing `./run.sh check` also passed the pinned
+B0 assets, text compatibility and MUSA linear/layer-norm/attention primitive
+checks under torch/torch_musa 2.9.1. The regression command
+
+```bash
+./run.sh shell -lc 'python -m unittest tests.test_kimodo tests.test_sessions \
+  tests.test_reference_timing tests.test_policy_runtime tests.test_baseline_bringup -v'
+```
+
+passed **49 tests** after adding coverage for the MUSA-safe Kimodo constraint
+index path. `baseline/ardy.py` has no diff; the default command still selects
+ARDY/B0, and the tests cover lazy Kimodo selection. A post-change default ARDY
+model-load and 2-second standing execution-only run also completed at
+`output/ardy-regression-final/batch-261007-050119/summary.md`. A default
+ARDY text-to-motion execution-only run also completed at
+`output/ardy-motion-regression-final/batch-261007-050858/summary.md`.
+
+The following actual worker runs are intentionally separated by evidence type:
+
+1. `output/kimodo-execution-fix4/batch-261007-042522/summary.md` loaded
+   Kimodo, SONIC and the shared simulator, then completed a 2-second
+   execution-only standing run. It had no task prompt, so it is not text-motion
+   or grasp evidence.
+2. `output/kimodo-motion-fix5/batch-261007-042830/summary.md` completed a
+   text-to-motion Kimodo generation, converted the pinned 30 Hz/36-column qpos
+   to the shared named-joint reference, resampled it to 50 Hz and executed it
+   through SONIC/MuJoCo. The attempt completed as execution-only; it is not a
+   grasp success. A current-source rerun is also recorded at
+   `output/kimodo-motion-final/batch-261007-052045/summary.md` and completed
+   with the same execution-only status.
+3. `output/kimodo-grasp-fix3/batch-261007-041403/attempt-00001/report.json`
+   is the final full grasp trial after the adapter device fixes. It generated
+   `kimodo/reach`, `kimodo/lower`, `kimodo/lower_replan_01` and
+   `kimodo/lower_replan_02` references, including `reference.npz` and
+   `reference.packet` for each phase. The trial executed physics to 13.84 s
+   and stopped with `grasp_alignment_missed` before closing; no grasp success
+   is claimed. The report records one buffer underrun and 42 target-limit
+   clamps, which remain part of the failure diagnosis.
+
+The first full grasp attempts exposed and then fixed two adapter-only issues: a
+MUSA/CPU constraint-index mismatch and a missing bound `torch` reference in the
+custom torso-rotation constraint. Those fixes are covered by the current unit
+tests and did not modify the pinned Kimodo checkout or `baseline/ardy.py`. The
+remaining negative result is a model/task execution outcome, not hidden or
+converted to a success. Contact-grasp success, paired Kimodo evaluation and
+comparison against B0 remain unverified.
+
+Packaging was also checked with fresh archives:
+`output/b0-source-final.tar.gz` contains the declared 62 B0 source files and
+excludes `baseline/kimodo.py` and `configs/kimodo.lock.json`; the explicit
+`output/kimodo-source-final.tar.gz` contains the corresponding 66 Kimodo-scope
+source files, including those two Kimodo artifacts. Neither archive contains
+weights, upstream checkouts or run artifacts.
+
+### Kimodo final-source contact-grasp verification — 2026-10-07
+
+All timestamps use Asia/Shanghai. Work was performed in the canonical worker
+`group3@10.123.0.39:/home/group3/dl`, not the older local checkout. Assets were
+downloaded on a connected machine, transferred with rsync and verified offline:
+
+- Source: `f12db15b33a3cfb4d4c1288d3b54ee7743a4255c`.
+- Checkpoint: `nvidia/Kimodo-G1-RP-v1`, revision
+  `3020ad8c419c244e0429d360163730c63c4ed011`.
+- Manifest SHA-256:
+  `05bb01c2be7b94b3b3dcfdf8a7e43998b59e314cbef28f8c2b5335de3b48affa`.
+- Weight SHA-256:
+  `e18c1de73e2ce17a107b06d85155fbbc5debe68eb35455aa5b033e6ddbe056a5`.
+
+Frozen upstream source, weights, ARDY assets and the vendor stack are unchanged.
+
+#### Boundary fixes and calibrated configuration
+
+Measured history is permuted by explicit names from IsaacLab order into the
+converter XML order before CPU constraint/heading conversion. Generated qpos
+uses the reverse named mapping into SONIC order. The declared standing anchor,
+not the latest moving pose, defines wrist-rotation deltas and canonicalization.
+Shared 25 Hz constraint timestamps map to Kimodo's 30 Hz grid; references are
+resampled to 50 Hz and velocities recomputed. Per-phase artifacts retain the
+actual constraints, measured history, raw/generated qpos, names, references,
+packets and hashes. MUSA index/cropping and unused posed-joint decode issues
+are handled only at the adapter boundary; qpos still comes from generated
+rotations and the pinned checkout is unchanged.
+
+Kimodo has no native ARDY-style history conditioning. Reports explicitly record
+`history_conditioning=false`; history supplies current-state anchors and the
+shared measured-pose transition, not future executed states. Batch/manual,
+prompts, grounding, root/wrist goals, SONIC, fingers, physics, checks, logs,
+rendering and evaluation are shared.
+
+Successful K0 uses 100 denoising steps, guidance `[2,2]`, raw nominal output,
+focused shared phase prompts, direct-start grasp and wrist-target offset
+`[0.125,0.035,0.080]` metres. This exploratory calibration is the new K0 grasp
+default and is saved in the plan. ARDY retains the measured-site default;
+explicit overrides and resumed plans keep their original settings. Grounding
+equations, acquisition gates, contact solver, free base, dynamic block,
+failure stops and success criteria were not changed or relaxed.
+
+Raw output is now the default; `--kimodo-no-projection` stays compatible.
+`--kimodo-project-constraints` explicitly enables experimental static-FK
+projection version 2: seven right-arm hinges only, physical limits, maximum
+0.7-radian offsets, declared hand-center target and soft wrist orientation.
+Other coordinates are preserved. It never steps physics, reads future
+execution or uses a teacher/learned residual. Its physical pilots failed;
+projection is not grasp-validated and is excluded from successful K0.
+
+#### Retained tuning evidence
+
+All folders below are under `output/`; all failures remain in their denominators.
+Each complete batch uses seeds 0--19.
+
+| Folder / session | Successes / completed | Failures |
+|---|---:|---|
+| `kimodo-batch20-261007/batch-261007-071905` | 0/20 | 10 alignment misses, 5 lower errors, 5 prohibited robot-table contacts. |
+| `kimodo-order-fix-batch20-261007/batch-261007-090900` | 0/20 | 20 alignment misses. |
+| `kimodo-offset4-raw-batch20-261007/batch-261007-102916` | 0/20 | 19 alignment misses, 1 timeout. |
+| `kimodo-offset8-raw-batch20-261007/batch-261007-103337` | 11/20 | 5 alignment misses, 1 acquisition failure, 2 timeouts, 1 post-threshold loss. |
+| `kimodo-final-batch20-261007/batch-261007-104935` | **11/20** | Same failure counts; fresh final source and defaults. |
+
+The one-attempt diagnostics also remain saved, all with alignment failure:
+named-order `batch-261007-090336`, guidance 1 `batch-261007-091949`, projection
+`batch-261007-095001`/`batch-261007-095804`, projection plus four replans
+`batch-261007-100427`, raw offsets .04/.06
+`batch-261007-100833`/`batch-261007-101338`, projected .04
+`batch-261007-102159`, and version-2 hand-center projection
+`batch-261007-103715`. Their complete `kimodo-*-261007` folders retain plans,
+reports and trajectories. These are tuning diagnostics, not additional
+independent benchmark conditions. Repeated seeded batches must not be pooled.
+
+#### Final-source 20-attempt physical simulation
+
+No explicit wrist offset or projection flag is required:
+
+```bash
+./run.sh batch --kimodo --grasp --batch 20 --seed 0 \
+  --device musa:0 --text-device musa:0 \
+  --output-root output/kimodo-final-batch20-261007
+```
+
+`kimodo-final-batch20-261007/batch-261007-104935/summary.json` records
+`status=complete`, planned/completed/evaluated 20, pending 0, successes 11 and
+failures 9. Success is **55%, episode-level Wilson 95% [34.21%,74.18%]**.
+The required minimum 4/20 is satisfied. Success seeds: 1,3,7,8,9,10,11,14,16,18,19.
+Failures: 0,4,5,6,15 alignment; 2 acquisition; 12,13 timeout; 17 post-threshold
+loss. Neither timeout nor loss after crossing the hold threshold is a success.
+
+The independent read-only `output/kimodo-debug-261007/final-audit.json` verifies
+all terminal seeds, final worktree source hashes against the immutable plan,
+and every successful report: physics/SONIC executed, free base, no elastic
+support, no teacher/learned correction/user intervention, opposing finger
+contact, at least 5 cm lowest-point clearance and 2 s continuous hold, final
+retention, no prohibited contact and no more than 30 simulated seconds.
+All 69 phase-generation reports passed using raw output, 100 steps and `[2,2]`.
+
+| Attempt / seed | Maximum clearance | Continuous hold | Simulated duration | Retained |
+|---|---:|---:|---:|---|
+| 2 / 1 | 0.18337 m | 8.315 s | 21.24 s | Yes |
+| 4 / 3 | 0.17349 m | 8.045 s | 23.48 s | Yes |
+
+The 20 trials contain 403.00 simulated seconds and 601.68 seconds summed
+attempt wall time, excluding startup/idle overhead. Median episode tracking
+joint RMSE is 0.09605 rad (range 0.07524--0.11816). Median command-to-first-
+reference wall latency is 7.318 s (7.268--25.842); median generation latency
+across 69 clips is 6.020 s (5.464--20.407). Median episode SONIC p50/p95
+latencies are 3.056/3.572 ms. One buffer underrun/hold is logged per attempt
+and there are 21 control deadline misses. These are retained under unchanged
+shared hold behavior. A 50 Hz reference grid is not real-time inference evidence.
+
+Plan digest: `a79ba434697025f1e15ebdfc6bc10b077088da96108495b8e46ab2da4b23b42c`.
+`plan.json` file SHA-256:
+`5fe517a19db4742b39b2e9f89d2432b6afc5b456b26a7f43798c5dea158a47ab`.
+
+| Final source file | SHA-256 |
+|---|---|
+| `baseline/kimodo.py` | `70a479132133e71c047d0770545999f64c7b1954192308ad3f772b29ecdbb64c` |
+| `baseline/kimodo_projection.py` | `3b45940be3ae5c38a0ff8372d6ff65797eb046c63dae0e5a568c65e085626ff2` |
+| `baseline/execution.py` | `3ff7635cf505c4ffbf809bb69509d892017f0043ab556b7e58589329a12c990b` |
+| `baseline/session.py` | `f61675ed7b17b4064557810817275fe3bb1f00eecff7544f35edf6193fafa5f9` |
+| `scripts/run.py` | `274d5d81b8e14e5b1fa38c0694f6ec87839d28669a89a3190524b4b98372cf2f` |
+| `configs/kimodo.lock.json` | `0967bc7ae7a8fbe75d75e1521ac9976ce1eeb8ac564ed027337c6aae75201f8b` |
+
+#### Regression and test evidence
+
+Vendor torch/torch_musa 2.9.1 was preserved. Runtime versions: MuJoCo 3.2.7,
+NumPy 1.26.4, SciPy 1.15.3, ONNX Runtime 1.23.2 and Transformers 5.8.1.
+No CUDA/TensorRT substitution or dependency upgrade was used.
+
+```bash
+./run.sh tests
+./run.sh smoke --out output/kimodo-final-smoke-261007
+./run.sh check
+./run.sh shell -c 'python scripts/fetch_kimodo.py --offline'
+```
+
+**184 tests passed**, including enabled RGB/MP4 tests. Fresh smoke passed
+synthetic reference/packet conversion only. Baseline pinned assets and MUSA
+operators passed; separate offline Kimodo source/checkpoint verification passed.
+Logs: `output/kimodo-debug-261007/final-full-tests.log`, `final-smoke.log`,
+`final-check.log`, `final-offline.log`. These checks alone are not grasp evidence.
+
+A clean snapshot of the exact staged Git index, without unrelated uncommitted
+Risk reviewer/continuation changes, also passed **173 tests** with RGB/MP4
+checks enabled (7.343 s). The worker's 184-test suite includes 11 additional
+unrelated working-copy tests. Snapshot and log:
+`output/kimodo-final-staged-source-261007/` and
+`output/kimodo-debug-261007/final-staged-tests.log`. All staged baseline/run
+source bytes match the final 20-trial source hashes; only documentation
+was updated after the physical batch.
+
+The unchanged batch CLI returns exit 1 when any attempt fails or remains
+pending, even if the batch is terminal and exceeds the requested success-rate
+threshold. Here `summary.json` is complete with 11 successes and 9 failures;
+exit 1 is expected and does not mean a model/runtime exception.
+
+```bash
+./run.sh batch --device musa:2 --text-device musa:2 \
+  --prompt "Stand still and slowly raise the right arm." --duration 2 \
+  --output-root output/ardy-kimodo-final-motion-261007
+./run.sh batch --grasp --batch 1 --seed 0 \
+  --device musa:2 --text-device musa:2 \
+  --output-root output/ardy-kimodo-final-grasp-261007
+```
+
+Default ARDY `batch-261007-105108` passed actual generation/SONIC/free-base
+execution, 229 control frames and 4.58 simulated seconds including startup;
+it has no task evaluator. ARDY grasp `batch-261007-105409` completed 1,500
+frames and 30 seconds without runtime error but had **0/1 task success**:
+timeout, 0.00291 m maximum clearance and no qualifying hold. This establishes
+runtime compatibility, not a preserved success-rate estimate. ARDY source,
+shared grounding, fingers, controller, physics and evaluator have no diff.
+Selector tests actually load the default ARDY stub with Kimodo import forbidden;
+other tests verify B0 defaults, explicit calibration overrides and saved resumes.
+
+#### Offline replay videos
+
+```bash
+./run.sh render --run output/kimodo-final-batch20-261007/batch-261007-104935 \
+  --attempts 1 2 4 --camera third_person --camera wrist_camera \
+  --width 480 --height 360 --fps 10
+```
+
+Rendering completed **3/3, zero failures**, with both cameras and MP4 output:
+attempt 1 is an alignment failure (139 frames); attempts 2 and 4 are successes
+(213 and 235 frames). Each artifact is in `attempt-XXXXX/vision/`, including
+`images.npz`, `video.mp4`, encoder log and hashed replay report. The aggregate
+report is `render-261007-110023-642823.json`. Reports confirm
+`physics_reexecuted=false`; replay is not a new physical trial. Source
+states/model hashes are retained and the original outcome reports are unchanged.
+
+#### Source packages and repository audit
+
+Fresh `output/kimodo-final-b0-source-261007.tar.gz` contains 62 declared B0
+source files and no Kimodo files. Its SHA-256 is
+`dba75b605abad2cd075c2354e8363ed33457ebcc514a350376d9662e6e0582d6`.
+The explicit `--scope kimodo` archive
+`output/kimodo-final-k0-source-261007.tar.gz` contains 68 source files,
+including both Kimodo modules, lock, fetcher and both Kimodo test modules;
+SHA-256 `79064d9caf220ab8a4bbc9e1009caf071d19ccaa6f07d3725faf9220db8b4736`.
+All archive content hashes match their manifests. Neither archive contains
+Risk/Residual packages, weights, environments, upstream checkouts, rollout
+artifacts or credentials. The default B0 archive scope is not expanded.
+The read-only check is `output/kimodo-debug-261007/final-package-audit.json`.
+These archives snapshot the current source/documents, including existing
+uncommitted shared-document edits; they do not assert Git-commit identity.
+
+The final source/document CJK audit found no matches, and `git diff --check`
+passed. Unrelated Risk continuation/reviewer/learning-document files were
+left intact and excluded from the Kimodo commit. No weights, outputs,
+credentials or environments are included in the staged source changes.
+
+#### Interpretation limits
+
+These autonomous simulation trials use no human corrections. They are tuning
+plus repeated-seed final-source verification, not held-out or paired B0/P
+evaluation. The two 11/20 batches are not 40 independent trials. No paired
+advantage, native Kimodo history conditioning, real-time generation,
+walking/grasp or GUI validation is established. Projection has no physical
+success. Core B0/P research remains separate; its unfinished experiments
+are not replaced by K0. Outputs, weights and credentials remain outside Git.

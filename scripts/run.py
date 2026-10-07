@@ -16,6 +16,10 @@ from baseline.session import (TERMINAL, latest_result, make_plan, next_attempt, 
                               session_directory, summarize)
 
 
+# Exploratory K0 wrist-target calibration; shared grounding and gates stay fixed.
+KIMODO_WRIST_OFFSET = (.125, .035, .08)
+
+
 def parse_request(payload, index, args):
     if not isinstance(payload, dict):
         raise ValueError("Input must be a JSON object")
@@ -68,6 +72,8 @@ def parser_for_run():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["batch", "manual"])
     parser.add_argument("--grasp", action="store_true", help="Enable the tabletop block grasp task; default: empty scene")
+    parser.add_argument("--kimodo", action="store_true",
+                        help="Use the pinned Kimodo-G1-RP-v1 generator; default remains frozen ARDY")
     parser.add_argument("--batch", type=int, default=1, help="Number of batch attempts (default: 1)")
     parser.add_argument("--resume", type=Path, help="Resume a batch folder using its saved configuration")
     parser.add_argument("--output-root", type=Path, default=ROOT / "output")
@@ -114,6 +120,21 @@ def parser_for_run():
     parser.add_argument("--ardy-repo", type=Path, default=ROOT / "third_party/ardy")
     parser.add_argument("--sonic-repo", type=Path, default=ROOT / "third_party/sonic")
     parser.add_argument("--assets", type=Path, default=ROOT / "checkpoints/baseline")
+    parser.add_argument("--kimodo-repo", type=Path, default=ROOT / "third_party/kimodo",
+                        help="Pinned Kimodo source checkout (used only with --kimodo)")
+    parser.add_argument("--kimodo-assets", type=Path, default=ROOT / "checkpoints/kimodo",
+                        help="Pinned Kimodo checkpoint root (used only with --kimodo)")
+    parser.add_argument("--kimodo-diffusion-steps", type=int, default=100,
+                        help="Kimodo denoising steps (default: 100)")
+    parser.add_argument("--kimodo-constraint-guidance", type=float, default=2.0,
+                        help="Kimodo pose-constraint guidance scale (default: 2)")
+    projection = parser.add_mutually_exclusive_group()
+    projection.add_argument("--kimodo-project-constraints", dest="kimodo_no_projection",
+                            action="store_false",
+                            help="Experimental nominal wrist projection (off by default; not grasp-validated)")
+    projection.add_argument("--kimodo-no-projection", dest="kimodo_no_projection",
+                            action="store_true", help="Keep raw Kimodo rotations (default)")
+    parser.set_defaults(kimodo_no_projection=True)
     parser.add_argument("--history-frames", type=int, default=16)
     parser.add_argument("--threads", type=int, default=4)
     return parser
@@ -136,7 +157,10 @@ def parse_args(argv=None):
             if any(s.startswith("--") and s.split("=")[0] != "--resume" for s in supplied):
                 parser.error("Use only: batch --resume PATH; settings come from plan.json")
             for key, value in config.items():
-                setattr(args, key, Path(value) if key in {"ardy_repo", "sonic_repo", "assets"} else value)
+                setattr(args, key, Path(value) if key in {"ardy_repo", "sonic_repo", "assets", "kimodo_repo", "kimodo_assets"} else value)
+            # Older Kimodo plans used raw exports. Preserve resumed experiments.
+            if config.get("kimodo", False) and "kimodo_no_projection" not in config:
+                args.kimodo_no_projection = True
             # Plans written before --walk used direct_start=False for the walking
             # path. Preserve that immutable behavior when they are resumed.
             if "walk" not in config:
@@ -154,6 +178,10 @@ def parse_args(argv=None):
         # A grasp attempt starts at the grounded table approach target unless
         # the caller explicitly opts into the walking approach.
         args.direct_start = not args.walk
+        if args.kimodo and args.wrist_offset is None:
+            # Store the selected K0 calibration in the immutable plan. Explicit
+            # overrides and resumed plans retain their original values.
+            args.wrist_offset = list(KIMODO_WRIST_OFFSET)
     if args.batch < 1 or args.seed < 0 or args.seed + args.batch - 1 >= 2**32:
         parser.error("batch must be positive; seeds must fit uint32")
     if args.mode == "manual" and (args.batch != 1 or args.plan_only):
@@ -162,6 +190,11 @@ def parse_args(argv=None):
         parser.error("--gui is for manual mode")
     if args.history_frames < 4 or args.history_frames % 4 or args.threads < 1:
         parser.error("history-frames must be a positive multiple of four; threads positive")
+    if args.kimodo_diffusion_steps < 1:
+        parser.error("kimodo-diffusion-steps must be positive")
+    if (not np.isfinite(args.kimodo_constraint_guidance)
+            or args.kimodo_constraint_guidance <= 0):
+        parser.error("kimodo-constraint-guidance must be finite and positive")
     if not (.05 <= args.start_back <= .6 and .20 <= args.table_standoff <= .55):
         parser.error("start-back must be .05-.6 m; table-standoff must be .20-.55 m")
     if (not np.isfinite([args.finger_kp, args.finger_kd, args.hold_seconds]).all()

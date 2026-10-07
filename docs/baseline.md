@@ -150,3 +150,53 @@ predate the allowed hand-table contact policy and complete hold recording.
 Two fresh manipulation pilots verified the revised collection behavior;
 their evidence is recorded separately in the verification document.
 Synthetic rendering fixtures do not establish physical G1 grasp success.
+
+## Optional Kimodo generator
+
+`./run.sh batch --kimodo` and `./run.sh manual --kimodo` select the pinned
+Kimodo-G1-RP-v1 generator. The default command remains B0/ARDY. The selected
+generator is loaded lazily by `baseline/execution.py`; no Kimodo import or
+checkpoint is required for an ordinary B0 run.
+
+Kimodo is an isolated generator adapter in `baseline/kimodo.py`. It consumes
+the same text, measured history, simulator-grounded root/wrist constraints and
+phase schedule as ARDY, but does not use ARDY's history-conditioning features.
+Its converter's explicit joint names are required to match the shared 29-joint
+SONIC order. Kimodo qpos is exported at 30 Hz, converted to the shared
+`ReferenceSequence`, resampled to 50 Hz, and passed through the same reference
+checks and `SonicSimulation.install` transition. Root translation remains a
+simulator/SONIC execution concern; no object attachment or scripted motion is
+introduced.
+
+New `--kimodo --grasp` sessions use the exploratory wrist-target offset
+`[0.125, 0.035, 0.080]` metres; this is saved explicitly in `plan.json`.
+ARDY retains `wrist_offset=null`, which selects the measured hand-center site.
+Explicit overrides and saved resume configurations are not recalibrated.
+The common grounding equations, acquisition gate, contact solver, fingers,
+30-second timeout and lift/hold success criteria are unchanged. These tuned
+K0 trials are not an unbiased held-out or matched B0/P comparison.
+
+Raw Kimodo rotations are exported by default. The compatibility flag
+`--kimodo-no-projection` keeps that behavior. The mutually exclusive
+`--kimodo-project-constraints` option enables the experimental static-FK
+nominal projection in `baseline/kimodo_projection.py`: only seven right-arm
+hinges may change, within physical limits and 0.7 radians of the raw clip.
+It fits the declared hand-center target, leaves all other coordinates intact,
+uses no physics stepping or execution feedback, and is not a learned residual
+or teacher. Its single-trial failures are retained; no grasp-success claim
+is made for projection. The verified K0 batch uses raw output.
+
+Kimodo assets are intentionally separate from the B0 lock and archive:
+
+```bash
+python scripts/fetch_kimodo.py --only all
+# On an offline machine, after copying complete pinned assets:
+python scripts/fetch_kimodo.py --offline
+python scripts/package_baseline.py --scope kimodo --out output/kimodo-source.tar.gz
+```
+
+If GitHub or Hugging Face is unavailable, run the fetch command on a connected
+machine and transfer both `third_party/kimodo/` and `checkpoints/kimodo/` with
+`rsync`; the fetch script prints the exact verification command and transfer
+layout. A missing source or manifest is a setup failure, not evidence that the
+model is compatible.

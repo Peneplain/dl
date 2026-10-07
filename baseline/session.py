@@ -52,9 +52,12 @@ def digest(value):
 
 
 def make_plan(config, requests):
-    plan = {"schema_version": 2, "method": "B0", "timezone": "Asia/Shanghai",
+    method = "KIMODO" if config.get("kimodo", False) else "B0"
+    plan = {"schema_version": 2, "method": method, "timezone": "Asia/Shanghai",
             "config": config, "requests": requests, "source_sha256": source_hashes(),
             "lock_sha256": sha256(LOCK)}
+    if config.get("kimodo", False):
+        plan["kimodo_lock_sha256"] = sha256(ROOT / "configs/kimodo.lock.json")
     plan["plan_sha256"] = digest(plan)
     return plan
 
@@ -174,7 +177,7 @@ def summarize(output, plan, status, requests=None):
     evaluated = [r for r in completed if r.get("task_success") is not None]
     successes = sum(r.get("task_success") is True for r in evaluated)
     failures = [r for r in rows if result_label(r) == "FAILED"]
-    summary = {"schema_version": 2, "status": status, "method": "B0",
+    summary = {"schema_version": 2, "status": status, "method": plan.get("method", "B0"),
                "planned": len(requests), "completed": len(completed),
                "pending": len(requests) - len(completed), "evaluated": len(evaluated),
                "successes": successes, "failures": len(failures),

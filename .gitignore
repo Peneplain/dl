@@ -29,4 +29,9 @@ wandb/
 !.env.example
 
 # Outputs
+/artifacts/
 /output
+
+# Local videos and temporary experiment logs are not source releases.
+/videos/
+/tmp/
