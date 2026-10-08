@@ -98,6 +98,9 @@ class ExecutionRuntime:
 
     @property
     def method(self):
+        explicit = getattr(self.args, "execution_method", None)
+        if explicit:
+            return explicit
         return "KIMODO" if getattr(self.args, "kimodo", False) else (
             "reference_correction_pilot" if self.correction_provider is not None else "B0")
 
@@ -224,6 +227,7 @@ class ExecutionRuntime:
                  "physics_executed": False, "sonic_executed": False,
                  "task_success": False if self.args.grasp else None,
                  "user_corrections": 0, "teacher_used": False, "expert_valid": False,
+                 "controller": getattr(self.args, "controller_metadata", None),
                  "generation_mode": "offline; simulated time paused during generation",
                  "phase_reports": [], "dependency_versions": {}}
         for package in ("torch", "torch_musa", "mujoco", "numpy", "scipy", "onnxruntime", "transformers"):

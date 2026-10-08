@@ -48,8 +48,18 @@ class GraspMetricTests(unittest.TestCase):
         mujoco.mj_forward(model, data)
         simulation = SimpleNamespace(model=model, data=data, root_q=0, frame_index=0,
                                      finger_names=(), finger_q=np.array([], dtype=int),
-                                     finger_target=np.zeros(0))
+                                     finger_target=np.zeros(0), learned_correction_used=False)
         return simulation, GraspEvaluator(simulation, directory)
+
+    def test_report_reflects_accepted_learning_correction_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sim, evaluator = self.fixture(directory)
+            try:
+                self.assertFalse(evaluator.summary()["learned_correction_used"])
+                sim.learned_correction_used = True
+                self.assertTrue(evaluator.summary()["learned_correction_used"])
+            finally:
+                evaluator.close()
 
     def test_contact_hold_is_continuous_and_open_hand_is_not_failure(self):
         with tempfile.TemporaryDirectory() as directory:

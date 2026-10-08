@@ -2,7 +2,8 @@
 
 Host standard library only. No new scene budget, test selection, downloads,
 DDP, automatic retries of rejected pairs, or edits to old experiment evidence.
-Start once with nohup after the first quality run reaches pilot-review.
+Start once with nohup after terminal pilot-review, or with an explicit review
+certificate for the one documented missing-reference execution limitation.
 """
 
 import argparse
@@ -12,6 +13,7 @@ import json
 import math
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 
@@ -142,6 +144,42 @@ def pilot_gate(repo, first):
                          "independent_new_parents": len(unique), "planned_pairs": len(jobs)}
 
 
+def pilot_admission(repo, first, certificate_path=None):
+    """The original three-valid-pair gate is unchanged without a certificate."""
+    if certificate_path is None:
+        state, plan, counts = pilot_gate(repo, first)
+        return state, plan, counts, None
+    # Lazy import avoids a dependency cycle with the stdlib review command.
+    from scripts.review_risk_quality_pilot import validate_certificate
+    certificate = validate_certificate(repo, first, certificate_path)
+    return (certificate["original_state"], read_json(first / "pairs/plan.json"),
+            certificate["counts"], certificate)
+
+
+def preserved_review(repo, first, certificate, report):
+    """Mutable collector summaries may advance; old evidence cannot be retried."""
+    verify_hashes(repo, certificate["immutable_evidence_sha256"])
+    old_results = certificate["initial_report"]["jobs"]
+    if any(report.get("jobs", {}).get(key) != original for key, original in old_results.items()):
+        raise ValueError("A previously reviewed pair was altered or retried")
+    expected = set(old_results) | set(certificate["remaining_job_ids"])
+    if set(report.get("jobs", {})) != expected or report.get("plan_sha256") != certificate["pair_plan_sha256"]:
+        raise ValueError("Collector expanded beyond the fixed original remaining candidates")
+    sources = read_json(first / "pairs/sources.json")
+    valid_paths = {host_path(repo, row["pair"]).resolve() for row in report["jobs"].values()
+                   if row["status"] == "paired"}
+    if any(host_path(repo, row["pair"]).resolve() not in valid_paths
+           for row in sources["parents"] if row.get("pair")):
+        raise ValueError("Invalid/rejected execution was exported as a training source")
+    outcomes = {}
+    for result in report["jobs"].values():
+        outcomes[result["status"]] = outcomes.get(result["status"], 0) + 1
+    return {"attempted_candidates": len(expected), "outcomes": outcomes,
+            "known_invalid_preserved": certificate["excluded_job_ids"],
+            "physical_pair_denominator": outcomes.get("paired", 0),
+            "scope": "Exploratory complete-case pairs; feedback-replan censoring is nonrandom. Invalid executions are not physical failures or training pairs."}
+
+
 def calibration_gate(repo, artifact_path, diagnosis_path, old_manifest):
     artifact, manifest = read_json(artifact_path), read_json(old_manifest)
     if (artifact.get("schema") != "dl-label-calibration-v1" or
@@ -224,14 +262,23 @@ def claim_first(first, output):
 
 
 class Continuation(Pipeline):
-    def __init__(self, repo, output, first, calibration, diagnosis):
+    def __init__(self, repo, output, first, calibration, diagnosis, pilot_review=None):
         self.first, self.old = first, repo / "output/teacher-risk-261006"
-        self.review, self.pair_plan, review_counts = pilot_gate(repo, first)
+        self.review, self.pair_plan, review_counts, self.certificate = pilot_admission(repo, first, pilot_review)
         calibration_gate(repo, calibration, diagnosis, self.old / "dataset/manifest.json")
         self.calibration = calibration
         super().__init__(repo, output, first / "index/sources.json",
                          repo / "configs/learning/risk-quality-pilot.json", 2)
-        self.inputs.update(self.review["source_sha256"])
+        self.inputs.update({str(host_path(repo, path).resolve()): value
+                            for path, value in self.review["source_sha256"].items()})
+        if self.certificate is not None:
+            self.inputs.update({str(host_path(repo, path).resolve()): value
+                                for path, value in self.certificate["immutable_evidence_sha256"].items()})
+            from scripts import review_risk_quality_pilot
+            for path in (pilot_review, Path(review_risk_quality_pilot.__file__),
+                         *(pilot_review.parent / "snapshot" / relative for relative in
+                           ("state.json", "pairs/report.json", "pairs/plan.json", "pairs/sources.json", "index/sources.json"))):
+                self.inputs[str(path.resolve())] = sha(path)
         for path in (Path(__file__).absolute(), first / "state.json", first / "pairs/plan.json",
                      calibration, diagnosis, self.old / "pairs/sources.json", self.old / "dataset/manifest.json",
                      repo / "configs/learning/p.json", repo / "output/data-collection-261005/prompts/val-a.json"):
@@ -243,6 +290,15 @@ class Continuation(Pipeline):
                                    "risk_max_epochs": 30, "residual_seeds": 1, "residual_max_epochs": 30,
                                    "paired_validation_trials": 3},
                           selection_rule="Lowest best total val loss; ties choose lower seed; raw validation max-F1 gate")
+        worktree_status = subprocess.check_output(["git", "status", "--porcelain=v1", "--untracked-files=all"],
+                                                 cwd=repo, text=True).splitlines()
+        self.state.update(source_worktree_dirty=bool(worktree_status), source_worktree_status=worktree_status,
+                          code_version="git_commit is the base revision; source_sha256 identifies the actual pinned working-tree code.")
+        if self.certificate is not None:
+            self.state["explicit_pilot_review"] = {"path": str(pilot_review), "sha256": sha(pilot_review),
+                "certificate_sha256": self.certificate["certificate_sha256"],
+                "original_status": "failed", "excluded_job_ids": self.certificate["excluded_job_ids"],
+                "remaining_job_ids": self.certificate["remaining_job_ids"], "scope": self.certificate["scope"]}
         self.save()
 
     def checked(self, stage, command):
@@ -255,11 +311,15 @@ class Continuation(Pipeline):
     def run(self):
         self.event("pilot-approved", self.state["review_counts"])
         pairs = self.first / "pairs"
+        expansion_limit = (len(self.certificate["remaining_job_ids"]) if self.certificate is not None
+                           else len(self.pair_plan["jobs"]))
         code = self.execute("teacher-expand", self.docker(self.gpu("teacher-expand"), "python", "-m",
             "experiments.collect_pairs", "--sources", self.container_path(self.sources), "--out",
-            self.container_path(pairs), "--resume", "--limit", str(len(self.pair_plan["jobs"]))))
+            self.container_path(pairs), "--resume", "--limit", str(expansion_limit)))
         report = read_json(pairs / "report.json")
         check_pairs(report)
+        if self.certificate is not None:
+            self.event("reviewed-evidence-preserved", preserved_review(self.repo, self.first, self.certificate, report))
         if code not in (0, 1):
             raise RuntimeError("Unexpected teacher collector exit status")
         recovery_parents = {"train": set(), "val": set()}
@@ -361,11 +421,14 @@ def main():
     parser.add_argument("--first", type=Path, default=Path("output/risk-quality-261006"))
     parser.add_argument("--calibration", type=Path, required=True)
     parser.add_argument("--diagnosis", type=Path, required=True)
+    parser.add_argument("--pilot-review", type=Path,
+                        help="Explicit immutable certificate for the exact known failed teacher pilot; no generic failure override")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
     first, calibration, diagnosis, output = [host_path(repo, path) for path in
                                             (args.first, args.calibration, args.diagnosis, args.out)]
+    pilot_review = host_path(repo, args.pilot_review) if args.pilot_review is not None else None
     if output.exists() or not output.parent.resolve().is_relative_to((repo / "output").resolve()):
         parser.error("Use a fresh output directory inside repository output")
     # The shared first-stage lock prevents mutation of a still-running pilot.
@@ -376,7 +439,7 @@ def main():
         output.mkdir(parents=True, exist_ok=False)
         pipeline = None
         try:
-            pipeline = Continuation(repo, output, first, calibration, diagnosis)
+            pipeline = Continuation(repo, output, first, calibration, diagnosis, pilot_review)
             pipeline.check_sources()
             pipeline.state["continuation_claim"] = claim_first(first, output)
             pipeline.save()

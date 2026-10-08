@@ -84,8 +84,19 @@ class SonicSimulation:
         self.tracking_errors = []
         self.deadline_misses = 0
         self.limit_clamps = 0
+        self.risk_decisions = 0
+        self.risk_activations = 0
+        self.risk_probabilities = []
+        self.risk_correction_norms = []
+        self.risk_latencies = []
+        self.residual_latencies = []
+        self.controller_latencies = []
+        self.risk_history_gaps = 0
         self.reset_count = 0
         self.frame_index = 0
+        # Set only after ReferenceChecks accepts a nonzero offset that is
+        # actually sampled into the SONIC reference slots.
+        self.learned_correction_used = False
         if output is None:
             self.started = time.perf_counter()
             self.reset()
@@ -104,6 +115,20 @@ class SonicSimulation:
                     f"{type(error).__name__}: {error}") from error
 
     def event(self, event, **fields):
+        if event == "risk_residual":
+            self.risk_decisions += 1
+            if fields.get("active"):
+                self.risk_activations += 1
+            for key, target in (("probability", self.risk_probabilities),
+                                ("desired_offset_norm", self.risk_correction_norms),
+                                ("risk_ms", self.risk_latencies),
+                                ("residual_ms", self.residual_latencies),
+                                ("controller_ms", self.controller_latencies)):
+                value = fields.get(key)
+                if value is not None and np.isfinite(value):
+                    target.append(float(value))
+        elif event == "risk_history_gap":
+            self.risk_history_gaps += 1
         if self.events is None:
             return
         import json
@@ -214,6 +239,15 @@ class SonicSimulation:
         self.end_time = 0.0
         self.holding = True
         self.terminal_hold_logged = False
+        self.learned_correction_used = False
+        self.risk_decisions = 0
+        self.risk_activations = 0
+        self.risk_probabilities = []
+        self.risk_correction_norms = []
+        self.risk_latencies = []
+        self.residual_latencies = []
+        self.controller_latencies = []
+        self.risk_history_gaps = 0
         self.task_phase = "stand"
         self.pose_history = deque(maxlen=200)
         self.reset_count += 1
@@ -350,6 +384,13 @@ class SonicSimulation:
         # a zero correction. Only the checked correction contributes an extra
         # derivative, including the shared ramp and joint-limit clipping.
         offset = checked.joint_pos - dense.joint_pos
+        # Only count a correction once it survives ReferenceChecks and is
+        # sampled into the references passed to SONIC. A requested offset that
+        # is clipped to zero, or one that exists only outside the sampled
+        # control slots, must not be reported as executed.
+        applied_offset = offset[slots]
+        if np.any(np.abs(applied_offset) > 1e-8):
+            self.learned_correction_used = True
         offset_velocity = np.gradient(offset, dense.times, axis=0).astype(np.float32)
         return checked.joint_pos[slots], v + offset_velocity[slots], checked.body_quat[slots]
 
@@ -457,6 +498,22 @@ class SonicSimulation:
                 "sonic_source": self.policy.source_commit, "sonic_manifest_sha256": self.policy.asset_hash,
                 "scene_sha256": sha256(self.scene),
                 "rollout": self.recording.summary() if self.recording else None,
+                "learned_correction_used": bool(getattr(self, "learned_correction_used", False)),
+                "risk_decisions": int(self.risk_decisions),
+                "risk_activations": int(self.risk_activations),
+                "risk_activation_rate": (self.risk_activations / self.risk_decisions
+                                          if self.risk_decisions else None),
+                "risk_history_gaps": int(self.risk_history_gaps),
+                "risk_probability_p50": float(np.percentile(self.risk_probabilities, 50)) if self.risk_probabilities else None,
+                "risk_probability_p95": float(np.percentile(self.risk_probabilities, 95)) if self.risk_probabilities else None,
+                "correction_norm_p50": float(np.percentile(self.risk_correction_norms, 50)) if self.risk_correction_norms else None,
+                "correction_norm_p95": float(np.percentile(self.risk_correction_norms, 95)) if self.risk_correction_norms else None,
+                "risk_latency_ms_p50": float(np.percentile(self.risk_latencies, 50)) if self.risk_latencies else None,
+                "risk_latency_ms_p95": float(np.percentile(self.risk_latencies, 95)) if self.risk_latencies else None,
+                "residual_latency_ms_p50": float(np.percentile(self.residual_latencies, 50)) if self.residual_latencies else None,
+                "residual_latency_ms_p95": float(np.percentile(self.residual_latencies, 95)) if self.residual_latencies else None,
+                "controller_latency_ms_p50": float(np.percentile(self.controller_latencies, 50)) if self.controller_latencies else None,
+                "controller_latency_ms_p95": float(np.percentile(self.controller_latencies, 95)) if self.controller_latencies else None,
                 "nominal_context": "nominal_context.csv" if self.output is not None else None,
                 "video": None}
 

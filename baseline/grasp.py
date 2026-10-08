@@ -350,6 +350,7 @@ class GraspEvaluator:
     """Assess every physics step, including rotated block extent and finger contacts."""
 
     def __init__(self, simulation, output):
+        self.simulation = simulation
         self.model = simulation.model
         self.block_q = int(self.model.joint("task_block_free").qposadr[0])
         self.block_geom = self.model.geom("task_block_geom").id
@@ -477,7 +478,9 @@ class GraspEvaluator:
                 "hand_table_contact_steps": self.hand_table_contact_steps,
                 "assessment_hz": 200, "user_corrections": 0, "teacher_used": False,
                 "first_prohibited_contact": self.first_failure,
-                "learned_correction_used": False, "expert_valid": False}
+                "learned_correction_used": bool(
+                    getattr(self.simulation, "learned_correction_used", False)
+                ), "expert_valid": False}
 
     def close(self):
         self.file.close()

@@ -52,7 +52,12 @@ def digest(value):
 
 
 def make_plan(config, requests):
-    method = "KIMODO" if config.get("kimodo", False) else "B0"
+    if config.get("risk_checkpoint"):
+        method = "risk_residual_batch"
+    elif config.get("kimodo", False):
+        method = "KIMODO"
+    else:
+        method = "B0"
     plan = {"schema_version": 2, "method": method, "timezone": "Asia/Shanghai",
             "config": config, "requests": requests, "source_sha256": source_hashes(),
             "lock_sha256": sha256(LOCK)}

@@ -55,6 +55,58 @@ class SessionTests(unittest.TestCase):
             parse_args(["batch", "--direct-start"])
         self.assertTrue(parse_args(["batch", "--grasp", "--direct-start"]).direct_start)
 
+    def test_learned_controller_plan_has_explicit_method(self):
+        learned = make_plan({"risk_checkpoint": "/data/risk/best.pt"}, [])
+        self.assertEqual(learned["method"], "risk_residual_batch")
+        self.assertEqual(make_plan({"kimodo": True}, [])['method'], "KIMODO")
+        self.assertEqual(make_plan({}, [])['method'], "B0")
+
+    def test_learned_controller_rejects_kimodo_and_enforces_update_rate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifacts = [root / name for name in ("risk.pt", "residual.pt", "gate.json")]
+            for artifact in artifacts:
+                artifact.write_text("fixture")
+            common = ["batch", "--grasp", "--risk-checkpoint", str(artifacts[0]),
+                      "--residual-checkpoint", str(artifacts[1]), "--risk-gate", str(artifacts[2])]
+            with self.assertRaises(SystemExit):
+                parse_args(common + ["--kimodo"])
+            self.assertEqual(parse_args(common + ["--risk-update-hz", "20"]).risk_update_hz, 20.)
+            for value in ("9", "20.1", "nan"):
+                with self.subTest(value=value), self.assertRaises(SystemExit):
+                    parse_args(common + ["--risk-update-hz", value])
+
+    def test_learned_resume_rejects_changed_artifacts_and_learning_source(self):
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
+            root = Path(directory)
+            artifacts = [root / name for name in ("risk.pt", "residual.pt", "gate.json")]
+            for artifact in artifacts:
+                artifact.write_text("fixture")
+            args = ["batch", "--grasp", "--output-root", str(root / "output"),
+                    "--risk-checkpoint", str(artifacts[0]),
+                    "--residual-checkpoint", str(artifacts[1]),
+                    "--risk-gate", str(artifacts[2]), "--plan-only"]
+            main(args)
+            output = next((root / "output").glob("batch-*"))
+            resume_args = ["batch", "--resume", str(output)]
+            for artifact in artifacts:
+                original = artifact.read_bytes()
+                try:
+                    artifact.write_bytes(original + b"changed")
+                    with self.assertRaisesRegex(ValueError, "Resume source/configuration/model lock"):
+                        main(resume_args)
+                finally:
+                    artifact.write_bytes(original)
+
+            source = Path(__file__).resolve().parents[1] / "risk_residual/models.py"
+            original = source.read_bytes()
+            try:
+                source.write_bytes(original + b"\n")
+                with self.assertRaisesRegex(ValueError, "Resume source/configuration/model lock"):
+                    main(resume_args)
+            finally:
+                source.write_bytes(original)
+
     def test_grasp_starts_at_table_unless_walk_is_requested(self):
         for mode in ("batch", "manual"):
             args = parse_args([mode, "--grasp"])

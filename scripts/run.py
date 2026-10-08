@@ -12,8 +12,8 @@ import numpy as np
 from baseline.common import ROOT, sha256, write_json
 from baseline.console import ManualConsole
 from baseline.grasp import DEFAULT_START_BACK, DEFAULT_TABLE_STANDOFF, PHASES
-from baseline.session import (TERMINAL, latest_result, make_plan, next_attempt, result_line,
-                              session_directory, summarize)
+from baseline.session import (TERMINAL, digest, latest_result, make_plan, next_attempt,
+                              result_line, session_directory, summarize)
 
 
 # Exploratory K0 wrist-target calibration; shared grounding and gates stay fixed.
@@ -117,6 +117,18 @@ def parser_for_run():
     parser.add_argument("--device", default="musa")
     parser.add_argument("--text-device", default="musa")
     parser.add_argument("--text-dtype", choices=["float32", "bfloat16"], default="bfloat16")
+    parser.add_argument("--risk-checkpoint", "--risk", dest="risk_checkpoint", type=Path,
+                        help="Optional frozen Predictive Risk checkpoint; requires --residual-checkpoint and --risk-gate")
+    parser.add_argument("--residual-checkpoint", "--residual", dest="residual_checkpoint", type=Path,
+                        help="Optional frozen Residual checkpoint used with --risk-checkpoint")
+    parser.add_argument("--risk-gate", "--gate", dest="risk_gate", type=Path,
+                        help="Validation-calibrated Risk gate used with the learned controller")
+    parser.add_argument("--risk-interface", choices=["P"], default=None,
+                        help="Learned interface; the current physical controller is P")
+    parser.add_argument("--risk-device", default=None,
+                        help="Torch device for Risk/Residual inference (default: --device)")
+    parser.add_argument("--risk-update-hz", type=float, default=None,
+                        help="Risk/Residual update frequency, constrained to 10-20 Hz (default: 10)")
     parser.add_argument("--ardy-repo", type=Path, default=ROOT / "third_party/ardy")
     parser.add_argument("--sonic-repo", type=Path, default=ROOT / "third_party/sonic")
     parser.add_argument("--assets", type=Path, default=ROOT / "checkpoints/baseline")
@@ -157,7 +169,9 @@ def parse_args(argv=None):
             if any(s.startswith("--") and s.split("=")[0] != "--resume" for s in supplied):
                 parser.error("Use only: batch --resume PATH; settings come from plan.json")
             for key, value in config.items():
-                setattr(args, key, Path(value) if key in {"ardy_repo", "sonic_repo", "assets", "kimodo_repo", "kimodo_assets"} else value)
+                path_keys = {"ardy_repo", "sonic_repo", "assets", "kimodo_repo", "kimodo_assets",
+                             "risk_checkpoint", "residual_checkpoint", "risk_gate"}
+                setattr(args, key, Path(value) if key in path_keys and value is not None else value)
             # Older Kimodo plans used raw exports. Preserve resumed experiments.
             if config.get("kimodo", False) and "kimodo_no_projection" not in config:
                 args.kimodo_no_projection = True
@@ -188,6 +202,27 @@ def parse_args(argv=None):
         parser.error("--batch and --plan-only are for batch mode")
     if args.mode == "batch" and args.gui:
         parser.error("--gui is for manual mode")
+    learned_paths = (args.risk_checkpoint, args.residual_checkpoint, args.risk_gate)
+    if any(path is not None for path in learned_paths) and not all(path is not None for path in learned_paths):
+        parser.error("--risk-checkpoint, --residual-checkpoint and --risk-gate must be supplied together")
+    if all(path is not None for path in learned_paths):
+        if args.kimodo:
+            parser.error("--kimodo cannot be combined with Risk/Residual artifacts; run B0 or P separately")
+        if not args.grasp:
+            parser.error("learned Risk/Residual inference requires --grasp so measured task sensors are available")
+        for label, learned_path in zip(("risk-checkpoint", "residual-checkpoint", "risk-gate"), learned_paths):
+            if not learned_path.is_file():
+                parser.error(f"{label} does not exist: {learned_path}")
+        if args.risk_interface is None:
+            args.risk_interface = "P"
+        if args.risk_device is None:
+            args.risk_device = args.device
+        if args.risk_update_hz is None:
+            args.risk_update_hz = 10.
+        if not np.isfinite(args.risk_update_hz) or not 10 <= args.risk_update_hz <= 20:
+            parser.error("risk-update-hz must be finite and between 10 and 20")
+    elif any(value is not None for value in (args.risk_interface, args.risk_device, args.risk_update_hz)):
+        parser.error("--risk-interface, --risk-device and --risk-update-hz require all three learned controller artifacts")
     if args.history_frames < 4 or args.history_frames % 4 or args.threads < 1:
         parser.error("history-frames must be a positive multiple of four; threads positive")
     if args.kimodo_diffusion_steps < 1:
@@ -241,8 +276,89 @@ def parse_args(argv=None):
 
 
 def config_for(args):
-    return {k: str(v.resolve()) if isinstance(v, Path) else v for k, v in vars(args).items()
-            if k not in {"resume", "output_root", "plan_only"}}
+    derived = {"risk_checkpoint_sha256", "residual_checkpoint_sha256", "risk_gate_sha256",
+               "risk_learning_source_sha256"}
+    excluded = {"resume", "output_root", "plan_only"} | derived
+    config = {k: str(v.resolve()) if isinstance(v, Path) else v for k, v in vars(args).items()
+              if k not in excluded}
+    paths = (("risk_checkpoint", "risk_checkpoint_sha256"),
+             ("residual_checkpoint", "residual_checkpoint_sha256"),
+             ("risk_gate", "risk_gate_sha256"))
+    if all(config.get(key) for key, _ in paths):
+        for key, hash_key in paths:
+            config[hash_key] = sha256(config[key])
+        config["risk_learning_source_sha256"] = {
+            str(path.relative_to(ROOT)): sha256(path)
+            for path in sorted((ROOT / "risk_residual").rglob("*.py"))
+        }
+    return config
+
+
+def build_risk_residual_provider(args):
+    """Load a provenance-checked controller for the shared batch executor."""
+    if args.risk_checkpoint is None:
+        return None, None
+    import torch
+
+    from baseline.runtime import device_for
+    from risk_residual.checkpoints import load_controller
+    from risk_residual.runtime import ReferenceCorrectionProvider, SimulationHistoryBuilder
+
+    device = device_for(args.risk_device)
+    controller = load_controller(args.risk_checkpoint, args.residual_checkpoint, args.risk_gate,
+                                 device=device, method=args.risk_interface)
+    provider = ReferenceCorrectionProvider(
+        controller, SimulationHistoryBuilder(controller.config), update_hz=args.risk_update_hz)
+
+    def metadata(artifact):
+        payload = torch.load(artifact, map_location="cpu", weights_only=True)
+        return {
+            "path": str(Path(artifact).resolve()),
+            "sha256": sha256(artifact),
+            "schema": payload.get("schema"),
+            "kind": payload.get("kind"),
+            "dataset_manifest_sha256": payload.get("dataset_manifest_sha256"),
+            "baseline_lock_sha256": payload.get("baseline_lock_sha256"),
+            "synthetic_inputs": payload.get("synthetic_inputs"),
+            "window_hashes": payload.get("window_hashes"),
+            "model_config": payload.get("model_config"),
+            "model_config_sha256": (digest(payload["model_config"])
+                                    if payload.get("model_config") is not None else None),
+            "interface": payload.get("interface"),
+            "risk_sha256": payload.get("risk_sha256"),
+        }
+
+    gate = json.loads(args.risk_gate.read_text())
+    controller_metadata = {
+        "schema": "dl-risk-residual-runtime-v1",
+        "interface": args.risk_interface,
+        "device": str(device),
+        "update_hz": float(args.risk_update_hz),
+        "risk": metadata(args.risk_checkpoint),
+        "residual": metadata(args.residual_checkpoint),
+        "gate": {
+            "path": str(args.risk_gate.resolve()),
+            "sha256": sha256(args.risk_gate),
+            "threshold": gate.get("threshold"),
+            "split": gate.get("split"),
+            "risk_sha256": gate.get("risk_sha256"),
+            "dataset_manifest_sha256": gate.get("dataset_manifest_sha256"),
+            "validation_windows_sha256": gate.get("validation_windows_sha256"),
+            "probability_transform": gate.get("probability_transform"),
+            "temperature": gate.get("temperature"),
+        },
+        "learning_source_sha256": {
+            str(path.relative_to(ROOT)): sha256(path)
+            for path in sorted((ROOT / "risk_residual").rglob("*.py"))
+        },
+        "dataset_manifest_sha256": gate.get("dataset_manifest_sha256"),
+    }
+    risk_config_hash = controller_metadata["risk"].get("model_config_sha256")
+    residual_config_hash = controller_metadata["residual"].get("model_config_sha256")
+    if risk_config_hash != residual_config_hash:
+        raise ValueError("Risk and residual model configurations differ")
+    controller_metadata["model_config_sha256"] = risk_config_hash
+    return provider, controller_metadata
 
 
 def main(argv=None):
@@ -264,7 +380,12 @@ def main(argv=None):
             print(text)
             return 0
         from baseline.execution import ExecutionRuntime
-        runtime = ExecutionRuntime(args, output)
+        provider, controller_metadata = build_risk_residual_provider(args)
+        args.controller_metadata = controller_metadata
+        args.execution_method = "risk_residual_batch" if provider is not None else None
+        if controller_metadata is not None:
+            write_json(output / "controller.json", controller_metadata)
+        runtime = ExecutionRuntime(args, output, correction_provider=provider)
         status = "running"
         try:
             if args.mode == "batch":
