@@ -1,6 +1,8 @@
 """Causal input equivalence and shared-executor pilot contracts, without GPU jobs."""
 
+from contextlib import redirect_stderr
 from copy import deepcopy
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -264,7 +266,8 @@ class PolicyRuntimeTests(unittest.TestCase):
             for file in files:
                 file.write_text("hash-only fixture; never loaded")
             args = SimpleNamespace(method="B0", requests=requests, risk=None, residual=None,
-                                   gate=None, baseline_options=["--", "--device", "cpu", "--hold-seconds", "10"],
+                                   gate=None, baseline_options=["--", "--ardy", "--device", "cpu",
+                                                                "--hold-seconds", "10"],
                                    learning_device="cpu", update_hz=10)
             b0, plan0 = prepare_plan(args)
             with patch("risk_residual.checkpoints.load_controller", side_effect=AssertionError("must not load")):
@@ -276,6 +279,43 @@ class PolicyRuntimeTests(unittest.TestCase):
             self.assertEqual(vars(b0), vars(p))
             self.assertEqual(planp["evaluation_scope"], "pilot")
             self.assertFalse(planp["teacher_used"])
+
+    def test_paired_plan_rejects_generator_and_controller_overrides(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            requests = root / "requests.json"
+            requests.write_text(json.dumps([{"seed": 41000, "cube_xy": [.4, -.2]}]))
+            files = [root / name for name in ("risk.pt", "residual.pt", "gate.json")]
+            for file in files:
+                file.write_text("hash-only fixture; never loaded")
+            for method in ("B0", "P"):
+                args = SimpleNamespace(method=method, requests=requests,
+                                       risk=files[0] if method == "P" else None,
+                                       residual=files[1] if method == "P" else None,
+                                       gate=files[2] if method == "P" else None,
+                                       baseline_options=["--", "--kimodo"],
+                                       learning_device="cpu", update_hz=10)
+                with self.subTest(method=method, selector="--kimodo"), \
+                        self.assertRaisesRegex(ValueError, "requires ARDY"):
+                    prepare_plan(args)
+                for option, value in (("--risk-checkpoint", files[0]), ("--risk", files[0]),
+                                      ("--residual-checkpoint", files[1]), ("--residual", files[1]),
+                                      ("--risk-gate", files[2]), ("--gate", files[2]),
+                                      ("--risk-interface", "P"), ("--risk-device", "cpu"),
+                                      ("--risk-update-hz", "20")):
+                    for flags in ([option, str(value)], [f"{option}={value}"]):
+                        args.baseline_options = ["--", "--ardy", *flags]
+                        with self.subTest(method=method, flags=flags), \
+                                self.assertRaisesRegex(ValueError, "controlled by this experiment entry point"):
+                            prepare_plan(args)
+                abbreviations = (["--risk-check", str(files[0]),
+                                  "--residual-check", str(files[1]), "--risk-gat", str(files[2])],
+                                 ["--bat", "99"], ["--out", str(root / "other")], ["--plan-on"])
+                for flags in abbreviations:
+                    args.baseline_options = ["--", "--ardy", *flags]
+                    with self.subTest(method=method, spelling="abbreviated", flags=flags), \
+                            redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                        prepare_plan(args)
 
 
 if __name__ == "__main__":

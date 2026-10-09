@@ -1,6 +1,7 @@
 {
   "status": "Proposed collection budget; prompt behavior needs pilot validation before large collection.",
   "baseline_args": [
+    "--ardy",
     "--table-standoff",
     ".20",
     "--hold-seconds",

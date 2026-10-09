@@ -1,4 +1,4 @@
-"""SONIC G1 joint order verified against upstream b042411f (see docs/integration.md)."""
+"""SONIC G1 joint order verified against upstream b042411f (see docs/baseline.md)."""
 
 import numpy as np
 

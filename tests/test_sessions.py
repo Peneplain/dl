@@ -44,6 +44,7 @@ class SessionTests(unittest.TestCase):
         self.assertIsNone(request["cube_xy"])
         self.assertIsNone(request["task"])
         self.assertEqual(args.batch, 1)
+        self.assertEqual(parse_args(["batch", "--bat", "2"]).batch, 2)
         for payload in ({"prompt": ""}, {"duration": float("nan")}, {"duration": 31},
                         {"seed": True}, {"typo": "text"}, {"cube_xy": [.4, -.2]}):
             with self.assertRaises(ValueError):
@@ -232,8 +233,9 @@ class SessionTests(unittest.TestCase):
             self.assertTrue(args.grasp)
             original = json.loads((output / "plan.json").read_text())
             self.assertEqual(make_plan(config_for(args), original["requests"]), original)
-            with self.assertRaises(SystemExit):
-                parse_args(["batch", "--resume", str(output), "--seed", "9"])
+            for extra in (("--seed", "9"), ("--ardy",), ("--kimodo",)):
+                with self.subTest(extra=extra), self.assertRaises(SystemExit):
+                    parse_args(["batch", "--resume", str(output), *extra])
 
     def test_legacy_plan_keeps_its_original_walking_selection(self):
         for grasp, direct_start in ((False, False), (True, False), (True, True)):

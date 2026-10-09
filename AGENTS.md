@@ -11,9 +11,11 @@ without changing recorded results or provenance.
 # Project specification
 
 At the start of a new chat in this repository, read `docs/project_context.md`
-for the latest project handoff, then inspect Git status and task-relevant files.
-After material changes, update that handoff with verified facts and remaining
-work. Keep secrets and raw chat transcripts out of the handoff.
+for the current implementation summary, then inspect Git status and task-relevant
+files. Keep that summary concise and current after material changes. Describe
+verified capabilities and remaining work; do not append dated progress logs,
+chat handoffs or commit-by-commit narratives. Keep secrets and raw chat
+transcripts out of project documentation.
 
 `docs/proposal.tex` is the source of truth for research scope, architecture,
 training and evaluation. `README.md` explains that design and the current
@@ -148,8 +150,9 @@ Documentation-only edits need consistency and formatting checks, not model runs.
   tracking, ARDY standing/arm motion, then contact grasp-and-lift. Record failed
   trials and their causes as well as successful ones.
 - Use fresh output directories. Record commands, dependency versions, hashes,
-  settings and failures with each run. Update `docs/verification.md` with actual
-  evidence and remaining gaps; do not present a planned check as completed.
+  settings and failures with each run. Keep raw evidence under ignored `output/`.
+  Update the concise results in `docs/verification.md` when measured conclusions
+  change; do not append running logs or present planned checks as completed.
 - Keep README architecture diagrams about the two main systems. Document
   comparison controls and ablations in a separate section, and update current
   implementation status as components become available.

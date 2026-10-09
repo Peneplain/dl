@@ -17,8 +17,8 @@ Run these commands from the server host in ~/dl:
   check       Verify local assets, sources and MUSA operators
   tests       Run all tests, including actual RGB/MP4 rendering
   smoke       Check synthetic reference conversion (--out required)
-  batch       Collect attempts; --batch N (default 1), --grasp enables block task
-  manual      Enter prompt JSON one attempt at a time; optional --gui / --grasp
+  batch       Collect attempts; --ardy or --kimodo, --batch N, optional --grasp
+  manual      Enter prompt JSON; --ardy or --kimodo, optional --gui / --grasp
               Grasp starts at the table; add --walk to approach from farther back
   render      Render selected attempts or --all after collection
   ardy        Generate a reference only (run_ardy.py arguments)
@@ -32,6 +32,9 @@ Run these commands from the server host in ~/dl:
   build-gui   Build the GUI image
   build-base  Build the control-only image
 
+Choose a frozen generator with --ardy (default) or --kimodo.
+Example: ./run.sh batch --ardy --grasp --batch 20 --seed 10000
+Resume:  ./run.sh batch --resume output/batch-TIME
 The default image is dl-musa-render:latest; override MUSA_IMAGE if needed.
 Sessions use output/batch-TIME or output/manual-TIME. See docs/commands.md.
 EOF

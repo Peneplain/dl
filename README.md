@@ -2,345 +2,155 @@
 
 HKU DASC 7606C Deep Learning · Track 4, Group 3
 
-The project provides a common G1 simulation harness for a frozen ARDY–SONIC
-baseline (B0), a frozen Kimodo comparator (K0), and the proposal system (P),
-which augments B0 with predictive risk and arm-reference residuals. All task
-data, evaluation and demonstrations come from simulation. The full research
-scope is described in the [proposal source](docs/proposal.tex).
+This repository runs text-driven tabletop block grasping with a simulated
+Unitree G1, frozen motion generators and frozen SONIC control. It implements
+Predictive Risk and Residual models and loads them through the same execution
+workflow as the nominal baseline. All task data and demonstrations are from
+simulation; images are recorded outputs, and object grounding uses simulator
+state.
 
-The proposal is user-frozen at its original approved version. Implementation
-updates and verification evidence belong in this README and the other documents,
-not in the proposal. The optional Kimodo comparator below is an exploratory
-implementation addition, not an amendment to the original B0/P research scope.
+## Start here
 
-[Run commands](docs/commands.md) · [Setup details](docs/baseline.md) · [Integration notes](docs/integration.md) ·
-[Verification](docs/verification.md) · [B0 grasp batches](docs/grasp.md) ·
-[Learning status](docs/learning.md) · [Project context](docs/project_context.md)
+- [Commands](docs/commands.md): setup, `--ardy` / `--kimodo`, GPU selection,
+  learned control, resume and video rendering.
+- [Frozen-model integration](docs/baseline.md): assets, adapters, SONIC and
+  recording interfaces.
+- [Grasp task](docs/grasp.md): language grounding, contact physics and success
+  criteria.
+- [Learning](docs/learning.md): data collection, verified teacher pairs,
+  tensor contracts, training and checkpoint provenance.
+- [Measured results](docs/verification.md): dataset, model and physical trial
+  evidence with limitations.
+- [Submission requirements](docs/track4_requirements.md).
+- [Current project context](docs/project_context.md).
+
+The [research proposal](docs/proposal.tex) is the approved, frozen source for
+research scope. Implementation status is documented separately. GR00T N1.7,
+camera perception, real-robot deployment and joint fine-tuning are not
+implemented in this simulation workflow.
+
+## Motion generator and controller
+
+Select a generator explicitly with `--ardy` or `--kimodo`. These flags are
+mutually exclusive. ARDY is the compatibility default when neither is supplied.
+Generator selection and learned control are separate choices:
+
+| Execution system | Generator | Learned controller | Evidence |
+| --- | --- | --- | --- |
+| B0 | Frozen ARDY-G1-RP-25FPS-Horizon8 | None | Shared nominal baseline |
+| K0 | Frozen Kimodo-G1-RP-v1 (`--kimodo`) | None | Exploratory second motion generator |
+| P | Frozen ARDY (`--ardy`) | Frozen trained Risk + Residual + validation gate | Integrated in batch/manual execution |
+
+P currently requires ARDY. Its checkpoints were trained on the ARDY data
+interface, so Kimodo cannot be combined with these learned artifacts. Kimodo
+is an additional generator comparison; it does not replace the proposal's
+B0/P learned-control study or its planned controls and ablations.
 
 ## Architecture
 
-The three execution variants below share text grounding, pose constraints,
-hand control, reference checks, the frozen SONIC controller and the same MuJoCo
-scene. B0 is the frozen ARDY–SONIC baseline, K0 is the separately pinned frozen
-Kimodo comparator, and P adds the proposal's learned Risk + Residual correction
-to B0. The diagrams describe the system boundaries; implementation status is
-listed separately below.
+The task sequencer combines English phase instructions with current table,
+block and robot poses. The selected frozen generator produces nominal body
+references. A named-joint adapter maps them into SONIC's G1 representation.
+SONIC controls the 29 body joints; a separate shared controller operates the
+articulated fingers.
 
-A shared task sequencer turns language and simulator object poses into task
-phases, wrist goals and standing constraints. In B0 and P, ARDY receives text,
-constraints and pose history; its output is decoded, mapped into SONIC joint
-order and resampled into nominal references: 29 body-joint positions and
-velocities, body orientation and aligned frame indices. K0 substitutes Kimodo
-as the frozen motion generator. The study uses privileged simulator state for
-grounding; camera perception is deferred.
-
-Blue blocks contain frozen models, orange blocks are the learned Risk and
-Residual models, and green is the simulator. Solid arrows carry references,
-model features or control commands; dashed arrows carry execution history.
-Both learned models also receive task-phase and planned hand-command context.
-Shared feedback for grounding, ARDY pose history, SONIC robot
-observations and feasibility checks is omitted to keep the diagrams readable.
-
-### Baseline (B0)
+### Nominal baseline
 
 ```mermaid
 flowchart TB
-    Q["Language + task sequencer"] -->|Text + constraints| A["Frozen ARDY<br/>Reference adapter + buffer"]
-    A -->|Nominal reference| C["Shared reference checks"]
-    C --> S["Frozen SONIC"]
-    S -->|Body control| G["G1 in MuJoCo<br/>Free base · Dynamic block · Articulated hand"]
-    Q --> H["Shared finger controller"]
-    H -->|Hand control| G
-
-    classDef shared fill:#f1f5f9,stroke:#94a3b8,color:#0f172a;
-    classDef frozen fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a;
-    classDef sim fill:#dcfce7,stroke:#22c55e,color:#14532d;
-    class Q,C,H shared;
-    class A,S frozen;
-    class G sim;
+    T[Language + simulator-state task grounding] --> M[Frozen ARDY or Kimodo]
+    M --> A[Named-joint reference adapter + buffer]
+    A --> C[Shared reference checks]
+    C --> S[Frozen SONIC]
+    S --> G[G1 in MuJoCo: free base + dynamic block]
+    T --> H[Shared articulated-finger controller]
+    H --> G
 ```
 
-B0 sends the nominal reference directly through the shared checks to SONIC.
-It has no risk model or learned correction. The finger controller handles
-closure, release and contact checks separately from body tracking. G1's root
-remains free, and lifting must result from frictional hand contacts with a
-dynamic block.
-
-
-### Kimodo control baseline (K0, optional)
-
-`--kimodo` selects the separately pinned, frozen Kimodo-G1-RP-v1 generator.
-K0 reuses batch/manual execution, phase prompts, simulator-state grounding,
-root/wrist constraints, reference checks, SONIC, articulated fingers, free-base
-MuJoCo physics, rollout logging, rendering and the evaluator. Omitting the flag
-preserves ARDY/B0, its defaults and its `ardy/` output layout.
-
-Kimodo exports named 36-column MuJoCo qpos at 30 Hz. The adapter remaps joints
-by name, preserves wxyz root quaternions, resamples references to 50 Hz and
-recomputes velocities. Executed history supplies current-state anchors and
-shared measured-pose transitions; Kimodo has no native ARDY-style history
-conditioning, and its reports explicitly record `history_conditioning=false`.
-
-The default Kimodo grasp uses an exploratory wrist-offset calibration of
-`0.125 0.035 0.080` metres. ARDY retains its measured hand-center default;
-`--wrist-offset` overrides either method explicitly. Raw Kimodo output is the
-default. `--kimodo-project-constraints` opts into an experimental bounded
-nominal right-arm projection, which has not demonstrated physical grasp
-success and is not used in the verified K0 batch. Neither path uses a teacher
-or learned Risk/Residual correction.
-
-The final-source 20-attempt simulation batch achieved **11/20 contact-grasp
-successes (55%; Wilson 95% interval 34.2%--74.2%)**. The earlier tuning batch
-also achieved 11/20 using the same seeds; these are not 40 independent trials.
-Failures, source hashes and ARDY regressions are recorded in
-`docs/verification.md`. This is exploratory task calibration, not held-out
-performance or a matched B0/P comparison.
-
-Kimodo source/weights are pinned separately in `configs/kimodo.lock.json`.
-They were downloaded on a connected machine, transferred with rsync and
-verified offline on the worker. The default B0 archive excludes Kimodo files;
-use `python scripts/package_baseline.py --scope kimodo --out output/kimodo-source.tar.gz`
-for an explicit source-only package.
-
-### Proposed (P): risk-guided correction
+### Predictive Risk-guided Residual control
 
 ```mermaid
 flowchart TB
-    G -.->|History S| R
-    G -.->|History S| D
-
-    Q["Language + task sequencer"] -->|Text + constraints| A["Frozen ARDY<br/>Reference adapter + buffer"]
-    A -->|Future reference A| R["Risk model<br/>G(S, A)"]
-    R -->|"p >= tau: risk tokens Z + score p"| D["Residual model<br/>R(S, A, Z) · Gated by p"]
-    A -->|A| D
-    D -->|A + bounded arm offsets ΔA| C["Shared reference checks"]
-    R -->|"p < tau: skip Residual<br/>Use A + zero-offset request"| C
-    C --> S["Frozen SONIC"]
-    S -->|Body control| G["G1 in MuJoCo<br/>Free base · Dynamic block · Articulated hand"]
-    Q --> H["Shared finger controller"]
-    H -->|Hand control| G
-
-    linkStyle 0 stroke-dasharray:5 5;
-    linkStyle 1 stroke-dasharray:5 5;
-
-    classDef shared fill:#f1f5f9,stroke:#94a3b8,color:#0f172a;
-    classDef frozen fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a;
-    classDef learned fill:#ffedd5,stroke:#f97316,color:#7c2d12;
-    classDef sim fill:#dcfce7,stroke:#22c55e,color:#14532d;
-    class Q,C,H shared;
-    class A,S frozen;
-    class R,D learned;
-    class G sim;
+    T[Language + simulator-state task grounding] --> A[Frozen ARDY + nominal reference adapter]
+    A --> C[Shared reference checks]
+    A --> R[Predictive Risk Transformer]
+    G[G1 in MuJoCo] -. Execution history .-> R
+    R --> Z[8 x 4 x 32 structured risk tokens + intervention score]
+    Z --> V[Validation-calibrated gate]
+    V -->|High risk| P[Residual Transformer]
+    Z --> P
+    A --> P
+    G -. Execution history .-> P
+    P -->|Bounded arm offsets| C
+    V -->|Low risk: zero desired offset| C
+    C --> S[Frozen SONIC]
+    S --> G
+    T --> H[Shared articulated-finger controller]
+    H --> G
 ```
 
-The Residual block includes arm masking, bounds and addition to the nominal
-reference; rate limits and reference validation remain in the shared checks.
-The low-risk branch selects the nominal reference with a zero-offset request;
-it still passes through the shared checks and their rate limit.
+Risk uses 300 ms of execution history and a 280 ms nominal future. It predicts
+tracking, contact, balance and intervention information. Residual reads the
+predicted representation and changes only the 14 arm-reference coordinates.
+Root, torso, legs and fingers remain under the common nominal system. At low
+risk, residual inference is skipped and any existing offset ramps to zero.
 
-The risk model reads 200–500 ms of execution history and future nominal motion,
-with task-phase and planned finger-command context. It predicts structured
-risk tokens `Z` and an intervention score `p`. The proposal uses eight future
-samples at 40 ms spacing, four body groups and 32 features per token. Future
-executed states are used for training labels, never as inference inputs.
+Physics runs at 200 Hz, SONIC references at 50 Hz, and Risk/Residual updates at
+10–20 Hz. Correction bounds, rate limits, physical stops, the scene and success
+assessment are shared between B0 and P. This executor pauses simulation during
+motion generation; it does not establish real-time deployment.
 
-When `p >= tau`, the residual model reads `(S, A, Z)` and requests bounded
-arm-joint reference offsets. Only the 14 arm joints can receive learned
-offsets; root, torso, legs and fingers remain outside the correction space.
-At low risk, residual inference stops and requests zero correction. Any
-previously applied offset ramps to zero under the same rate limit. Shared
-checks enforce limits and clearance, recompute velocities and dependent fields,
-and apply the same failure stops used by B0.
+## Retained verified evidence
 
-ARDY and SONIC stay frozen. Risk is trained first, then frozen while the
-residual is trained with predicted risk features and supervised teacher
-corrections. The teacher is absent at evaluation. Training uses bounded
-predictions before gating; the gate controls execution at inference.
+Risk and Residual training, validation gate selection and physical execution
+through `./run.sh batch` are complete. The final dataset contains 82,060 train,
+29,248 validation and 29,497 test windows. Correction supervision is much
+smaller: 30, 9 and 13 samples respectively. Related branches share original
+parents; window and source-entry counts are not independent trial counts.
 
-SONIC targets 50 Hz and Risk/Residual updates target 10–20 Hz. A timestamped
-reference buffer covers both consumers' lookahead and resamples to their
-clocks. Buffer underruns invoke a shared hold and are logged. These are target
-rates, not measured real-time performance.
+In the fixed seed cohort 61020–61079, three batches total 60 matched B0/P trials; **both methods
+succeeded in 23/60 trials (38.33%)**. P-only and B0-only successes were seven
+each. This establishes working learned control but no aggregate task-success
+improvement. The tuned Kimodo batch achieved 11/20 successes; its seeds and
+calibration differ, so it cannot be pooled with or ranked against that B0/P
+experiment. See [verification](docs/verification.md) for exact artifacts,
+uncertainty and predictive-versus-reactive metrics.
 
-## Planned comparisons and ablations
+## Quick start on the S4000 host
 
-The primary comparison remains **B0 versus P** under the same scene, frozen
-checkpoints, task interface, hand controller and evaluation protocol. **K0**
-is an additional exploratory comparison of a frozen Kimodo motion generator
-through the same shared execution stack; it is not part of the proposal's
-primary B0/P ablation set. Following the proposal, we will also run the
-intermediate controls and component ablations below. These are planned
-experiments, not reported results.
-
-| Experiment group | Planned comparisons |
-| --- | --- |
-| Frozen motion-generator comparator | K0: Kimodo + shared SONIC, checks, hand control and MuJoCo physics; report separately from proposal ablations |
-| Residual and gating controls | B1: always-on residual; B2: reactive gate; I1: predictive gate without risk features |
-| Risk representation | I2: scalar probability; I3: body-wise risks; I4: body–time risk map; P: structured learned tokens |
-| Component and loss ablations | Pooled tokens; no future-action input; no execution history; no auxiliary risk losses; no selective gate; no identity loss; no smoothness loss |
-
-B1, B2 and I1 will reuse one residual checkpoint. The no-gate variant will reuse
-P's trained networks without retraining. Other variants will follow the
-proposal's retraining rules, with one factor changed at a time. We will
-prioritize B0, B1, I2 and P and identify any unfinished experiments explicitly.
-
-## Current implementation
-
-The implemented B0 path uses pinned ARDY and SONIC with a free-base MuJoCo G1.
-There are two execution modes in `scripts/run.py`: `batch` generates independent
-attempts; `manual` accepts one prompt JSON at a time with an optional persistent
-GUI. Both preload SONIC, ARDY, and the text encoder, then display an explicit
-model-ready banner before accepting or executing prompts. Both use
-`baseline/execution.py`, reset per attempt and save full 50 Hz
-states. Defaults have no prompt or task, only a robot and ground. `--grasp`
-enables the pilot table/block scene and simulator-state grounding. By default,
-the free base starts at the grounded table target before physics, passes a
-two-second stable stand check, then runs reach, lower, close, lift, and hold.
-Add `--walk` to start farther back and run approach, settle, and upper-body
-preparation before those hand phases. `--direct-start` remains a compatibility
-alias for the default start. Manipulation-only results and walk-and-grasp
-results are recorded separately.
-Preparation requests an 8-degree waist inclination because this G1 has a rigid
-head; both feet must settle again before the arm reach. Root paths and wrist
-constraints condition ARDY without camera inputs. Actual arrival and stability
-are checked before reaching; SONIC G1 mode does not directly track global root
-XY. Articulated fingers and physical assessment remain shared. Busy manual
-sessions discard additional input until the current attempt ends.
-
-Sessions are saved as `output/batch-TIME/attempt-00001/` or
-`output/manual-TIME/attempt-00001/`, where TIME is `YYMMDD-HHMMSS` in Asia/Shanghai time, with readable TXT/Markdown summaries,
-CSV results and success/failure lists. Collection never launches a renderer.
-`scripts/render.py` renders selected attempts, all attempts or successes into
-RGB and MP4 afterward, with progress and fresh output directories. The default
-is one third-person camera at 640×480 and 25 FPS, with H.264 CRF 18 encoding; full states remain at 50 Hz.
-A software GLX viewer is available over SSH-tunneled VNC for manual sessions.
-
-The current pilot uses one task instruction with phase-specific text and simulator
-state grounding. Settle, close and hold preserve checked references. A measured
-hand/block alignment gate ends descent before finger closure; the shared
-controller then holds measured posture through frozen SONIC. Initial arms are
-parked behind the table. Default extra backoff is .45 m and final standoff .20 m.
-The extra backoff applies only with `--walk`. Both hands, including palms and
-fingers, may contact the table; other robot-table contacts still stop the trial.
-Contact physics remains active and allowed hand-table contacts are counted.
-The complete five-second hold phase is recorded even after the two-second
-success threshold is reached, subject to failure stops and the 30-second timeout.
-The finger controller now uses stiffness 6 Nm/rad and damping .4 Nm s/rad,
-under the original joint and motor torque bounds. The shared tabletop solver
-uses elliptic friction cones, Newton, impedance ratio 10 and tolerance 1e-10
-to reduce soft-contact drift; friction coefficients and object mass are retained.
-Threshold achievement and retention at episode end are reported separately;
-a block lost after reaching the threshold is a failed trial.
-The default hand remains fully open during reach/lower, closes only after
-measured alignment, then uses a 4.8-second generated lift. The calibration
-protocol and evidence format are recorded in [verification.md](docs/verification.md).
-The acquisition gate requires the block center within one-third of its
-half-height of the measured hand center (1 cm for the 6 cm block). The October
-5 three-seed, ten-second-hold repair pilot retained one success; grasp stability
-remains under calibration. Create fresh collection plans after this source
-change; saved plans retain their original source hashes.
-These are nominal rules shared by all future methods, not learned corrections.
-
-The Risk/Residual model, dataset checks and synthetic training pipeline are
-implemented in separate packages, with an optional correction interface in
-the shared simulator. A rollout-to-window converter and controlled paired
-teacher pilot have been added. One pilot pair passed physical/controller-state
-matching and a single-parent window audit. Split planning, batch indexing,
-resumable controlled pair collection and dataset supervision audits are now
-available; see [the data workflow](docs/learning.md#batch-data-workflow).
-The completed October collection now supplies audited train/validation/test
-Risk windows and a launcher for independent training seeds on separate MUSA
-GPUs. Residual still lacks verified correction samples. General teacher
-recovery and the P trial entry point remain unfinished; no measured P grasp
-result is claimed.
-See [learning.md](docs/learning.md) for exact scope. Experimental results and
-verification gaps are maintained in [verification.md](docs/verification.md).
-
-The baseline setup and inference scripts run independently of learning code.
-Learned corrections, training and data tooling belong in separate modules that
-can reuse the baseline; `baseline/` must not depend on them.
-
-## Run on S4000
-
-Run all host-side workflows through [commands.md](docs/commands.md), which uses
-the single `./run.sh` entry point for setup, checks, execution, camera rendering,
-interactive prompts, conversion and packaging. This selects the rendering image
-and the existing environment while preserving the vendor `torch`/`torch_musa`
-pair. See [baseline.md](docs/baseline.md) for dependency, asset and model details.
+Run from the repository on the host, outside the container:
 
 ```bash
-./run.sh batch --grasp --batch 20 --seed 42
-./run.sh render --run output/batch-TIME --attempts 1 3
-./run.sh manual --grasp --gui
+./run.sh batch --ardy --grasp --batch 20 --seed 42
+./run.sh batch --kimodo --grasp --batch 20 --seed 42
+./run.sh render --run output/batch-YYMMDD-HHMMSS --attempts 1 3
 ```
 
-Omit `--batch` for one attempt, and omit `--grasp` for an empty task. Replace
-`batch-TIME` with the actual directory printed by the command.
-
-## Local checks
-
-Use `./run.sh check`, `./run.sh tests` and `./run.sh smoke --out
-output/smoke-01`; the [command guide](docs/commands.md) documents these
-checks and what each one establishes. Smoke data and operator tests do not
-prove model compatibility or physical grasp success.
+Each batch uses a fresh timestamped directory. Render only selected attempts
+when raw RGB storage is limited. [Commands](docs/commands.md) includes the
+matched checkpoint set for P and the offline asset-transfer procedure.
 
 ## Repository layout
 
 ```text
-baseline/
-  common.py         Source and weight provenance
-  text_encoder.py   Local Llama backbone and two frozen LLM2Vec adapters
-  llama.py          Bidirectional attention compatibility
-  adapters/         G1 joint order, reference resampling and SONIC packets
-  grasp.py          Pilot task grounding, spatial goals and physical assessment
-  execution.py      Shared batch/manual frozen-model execution
-  session.py        Immutable plans, resume and readable episode statistics
-  console.py        Manual READY/BUSY input handling
-  rollout.py        Complete simulation-state and compiled-scene recording
-  rendering.py      Offline MuJoCo camera RGB and MP4 rendering
-configs/
-  baseline.lock.json
-  learning/p.json   Initial Risk/Residual training configuration
-experiments/        Synthetic check, training, calibration and statistics
-risk_residual/      Models, audited dataset, inference and checkpoints
-scripts/            Baseline installation, downloads, inference and checks
-docker/             MUSA container launcher
-tests/              Baseline provenance and packaging checks
-docs/               Baseline setup, integration, verification and project proposal
-checkpoints/baseline/ Local frozen model files and manifests (ignored)
-third_party/        Pinned upstream source checkouts (ignored)
-output/             Batch/manual sessions, verification and source archives (ignored)
+baseline/           Shared frozen generators, reference adapters, physics and recording
+risk_residual/      Models, losses, causal dataset, provenance and inference
+experiments/        Data planning, teacher collection, training and evaluation
+scripts/            Host workflows, asset tools, rendering and guarded pipelines
+configs/            Source/model locks, prompts and learning/data configurations
+docker/             Vendor MUSA container launcher and rendering/GUI support
+tests/              Contracts, regression checks and physical/rendering probes
+docs/               Setup, task, learning, measured results and frozen proposal
+checkpoints/        Local model assets and manifests (ignored)
+third_party/        Pinned upstream checkouts (ignored)
+output/             Datasets, checkpoints, trials and rendered videos (ignored)
 ```
 
-Weights, datasets, environments, upstream checkouts and generated artifacts are
-excluded from Git. `scripts/package_baseline.py` uses a baseline file allowlist
-for source archives, so adding an experimental training script does not add it
-to the baseline upload.
+Keep original model download metadata and generated evidence outside Git.
+`output/` may resolve to a shared `/data` volume; the launcher mounts its target
+inside the container. Source archives use an explicit packaging scope.
 
-Keep model assets in `checkpoints/baseline/` with their original download
-metadata. Generated outputs stay under `output/`; historical run outputs and
-redundant installer archives were removed during the documented cleanup.
-
-## Physical acceptance target
-
-Validation proceeds through free-base standing and known-reference tracking,
-ARDY standing and arm motion, then the pilot table, dynamic block and articulated
-hand with frictional contacts. The new collector needs physical grasp/lift
-acceptance before its settings become the frozen comparison configuration.
-
-A successful trial must lift the instructed block's lowest point at least 5 cm
-above the tabletop and hold it continuously for 2 s, within 30 s of simulated
-time, without a fall or prohibited collision. Record failed trials as well as
-successful ones. Preserve prompts, seeds, model and scene hashes, trajectories,
-video, simulation time and wall time.
-
-## Upstream projects
-
-- [ARDY source](https://github.com/nv-tlabs/ardy) and
-  [Horizon8 G1 checkpoint](https://huggingface.co/nvidia/ARDY-G1-RP-25FPS-Horizon8)
-- [SONIC source](https://github.com/NVlabs/GR00T-WholeBodyControl) and
-  [streaming protocol](https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/zmq.html)
-- [MuJoCo](https://github.com/google-deepmind/mujoco)
-
-External code, models and datasets retain their upstream licenses. The proposal
-contains the research bibliography and planned comparisons.
+External code, models and datasets retain their upstream licenses. Source and
+checkpoint references are pinned in `configs/baseline.lock.json` and
+`configs/kimodo.lock.json`; acknowledge them and LLM assistance in course
+submissions.

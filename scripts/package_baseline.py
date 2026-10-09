@@ -11,7 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 TOP_FILES = {"AGENTS.md", "README.md", "run.sh", "Dockerfile.musa", ".gitignore", ".dockerignore",
              "pyproject.toml", "requirements-musa.txt", "requirements-cpu.txt",
              "requirements-baseline.txt", "requirements-sonic-sim.txt", "configs/baseline.lock.json",
-             "docs/baseline.md", "docs/commands.md", "docs/grasp.md", "docs/prompts.md", "configs/grasp-prompts.json", "docs/integration.md", "docs/verification.md",
+             "docs/baseline.md", "docs/commands.md", "docs/grasp.md", "docs/learning.md",
+             "docs/project_context.md", "docs/track4_requirements.md",
+             "configs/grasp-prompts.json", "docs/verification.md",
              "docs/proposal.tex", "scripts/check_backend.py", "scripts/check_baseline.py", "scripts/check_sonic_onnx.py",
              "scripts/fetch_baseline.py", "scripts/install_baseline.sh",
              "scripts/package_baseline.py", "scripts/prepare_reference.py",
@@ -19,7 +21,7 @@ TOP_FILES = {"AGENTS.md", "README.md", "run.sh", "Dockerfile.musa", ".gitignore"
              "scripts/render.py",
              "scripts/run_ardy.py", "scripts/ardy_service.py", "scripts/run.py", "scripts/smoke.py"}
 BASELINE_TESTS = {
-    "tests/__init__.py", "tests/test_baseline_bringup.py", "tests/test_deploy_motion.py",
+    "tests/test_baseline_bringup.py", "tests/test_deploy_motion.py",
     "tests/test_grasp.py", "tests/test_reference_timing.py", "tests/test_rollout_rendering.py",
     "tests/test_sessions.py", "tests/test_simulation.py", "tests/test_text_encoder.py",
 }

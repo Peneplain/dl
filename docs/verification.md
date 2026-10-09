@@ -1,1572 +1,228 @@
-# Verification — 2026-10-03
-
-Evidence for the new two-mode workflow is retained under
-[`output/review-20261003-024719`](../output/review-20261003-024719/).
-Generated evidence stays outside Git; this document records the result and its
-limits. Commands were run on the supported S4000 host through the existing
-MUSA containers and `.venv-baseline-musa`.
-
-## Environment and checks
-
-`./run.sh check` passed dependency checks, pinned-source cleanliness, all five
-local asset manifests and MUSA linear/layer-norm/attention primitives.
-Versions: torch 2.9.1, torch_musa 2.9.1+a18d871, MuJoCo 3.2.7,
-NumPy 1.26.4, ONNX Runtime 1.23.2, Transformers 5.8.1, PEFT 0.19.1.
-ARDY source is `693f74d13b3d04a0a22ce127ee79c929dd89756b`; SONIC source is
-`b042411fae38ee4d1af9aac82a37a1f8d14d6dd0`. Full asset hashes remain in the
-lock/manifests and each physical report. Primitive checks alone establish
-neither complete model execution nor task success.
-
-- `./run.sh tests`: **47 tests passed** (`tests-final.log`). These cover
-  named reference conversion, pose-constraint transforms, task assessment,
-  deterministic seeds, default empty tasks, immutable resume plans, evidence
-  tampering, failure denominators, model-load failures, worker reuse, pipe/PTY
-  busy-input exclusion, render selection, actual RGB/MP4, sampled state mapping,
-  failure preservation, source packaging and offline text adapters.
-- `./run.sh smoke --out output/review-20261003-024719/smoke-final`: passed,
-  converting 9 synthetic frames to 17 at 50 Hz. It runs no model or physics.
-- Shell syntax, Python parsing, local documentation links and Git diff whitespace
-  are checked as part of the final source review. The LaTeX source is updated;
-  a PDF was not rebuilt because no TeX compiler is installed.
-
-## Actual execution and visualization
-
-`./run.sh batch` produced
-[`batch-20261003-030857-346254`](../output/batch-20261003-030857-346254/summary.md):
-one 2-second free-base SONIC standing attempt. It had no prompt, task objects or
-GUI, and reported `COMPLETED`, with `task_success=null`. This is not grasp success.
-
-`./run.sh manual --gui` produced
-[`manual-20261003-030857-536362`](../output/manual-20261003-030857-536362/summary.md).
-An automated stdin driver waited for READY, submitted `{}`, sent an extra prompt
-while BUSY, then submitted a second `{}` after READY and quit. The actual GLX
-MuJoCo viewer ran both independent two-second attempts, with seeds 0 and 1.
-The busy prompt was discarded, never executed or recorded as an accepted request.
-`manual-gui-check.json` records the assertions. The remote Mac VNC client was
-not retested during this change; the server viewer was exercised.
-
-A second GUI check submitted a real text JSON, “A person stands upright and
-slowly raises the right hand.” (duration 1 s, seed 42), to frozen ARDY on MUSA,
-then tracked it through SONIC in MuJoCo. It completed 3.58 simulated seconds
-including standing/transition, returned to READY, and discarded the injected
-busy command. Evidence is
-[`manual-20261003-031351-875357`](../output/manual-20261003-031351-875357/summary.md)
-and `manual-prompt-gui-check.json`. This establishes a working text-to-GUI
-execution path, not a quantitative motion-fidelity or grasp result.
-
-The actual `render --attempts 2 3` command rendered both short collision trials
-from the prompt pilot, including failures, into RGB plus MP4. `render --all`
-rendered both GUI standing attempts. Logs are `render-selected.log` and
-`render-all.log`; receipts are in their session directories. These checks used
-160×120, 25 FPS, third-person, OSMesa. Unit tests additionally exercise multiple
-named cameras. Replays restore saved states without policy inference or physics
-integration, and do not provide independent task verification.
-
-## Prompt pilot: no success improvement established
-
-[`batch-20261003-030410-331002`](../output/batch-20261003-030410-331002/summary.md)
-contains a four-run paired diagnostic. `prompt_pilot.py` in the review directory
-reuses one frozen model instance and records the exact requests/provenance.
-Each pair uses the same scene position, seed, controller, spatial constraints,
-finger targets and success/failure checks; only prompt profile differs.
-
-| Attempt | Seed | Profile | Block XY (m) | Result | Simulated seconds |
-| --- | --- | --- | --- | --- | --- |
-| 00001 | 42 | legacy | .437396, -.238557 | timeout | 30.00 |
-| 00002 | 42 | focused | .437396, -.238557 | prohibited robot-table contact | 2.98 |
-| 00003 | 44 | legacy | .372257, -.263864 | prohibited robot-table contact | 2.94 |
-| 00004 | 44 | focused | .372257, -.263864 | timeout | 30.00 |
-
-Both profiles succeeded in **0/2** trials. This is a small exploratory pilot,
-not the proposal's evaluation suite or evidence that the focused profile is
-better. The default focused text provides a clearer stage-specific interface;
-its physical benefit is unverified. The legacy profile remains selectable.
-
-Both collision reports identify `right_hand_index_1_link` contacting
-`task_table` during reach (first contact at 2.965 s and 2.935 s).
-Both timeouts reached all five phases but logged zero opposing-finger contact
-steps and zero continuous hold time. Maximum block clearance across all four
-was about 1.75 mm from initial settling, far below the required 5 cm.
-These observations point to reach clearance and hand/block alignment as further
-calibration needs; they do not isolate a single controller cause. Changing text
-alone has not solved the physical failures.
-
-The current task uses a free root, dynamic 80 g / 6 cm block, articulated
-fingers and frictional contacts. It checks collision/hold conditions at 200 Hz
-and saves full states at 50 Hz. Success requires the block's lowest point at
-least 5 cm above the table for 2 s within 30 s, with pilot opposing contact
-above .01 N and no prohibited contact/fall. This contact threshold still needs
-validation. Safety checks were not relaxed for the pilot.
-
-## Review and cleanup
-
-Execution scheduling is unified in `scripts/run.py` and
-`baseline/execution.py`; session reporting/resume and manual input are separate
-small shared modules. Rendering is consolidated in `scripts/render.py` plus
-`baseline/rendering.py`. Redundant live/grasp frontends, the extra GUI wrapper,
-obsolete batch helpers and unused simulation video arguments were removed.
-
-Review fixed generation-worker shutdown after an ordinary per-attempt error,
-repeated batch attempts after missing model assets, the uint32 seed upper bound,
-summary persistence during cleanup, reference-file integrity, and preservation
-of original state indices when RGB is subsampled. Regression checks cover the
-failure and mapping cases. Completed failures remain in the denominator and
-are never automatically retried to obtain a success.
-
-At the user's request, the previous `artifacts/` output tree, unused installed
-wheel cache and stale generated proposal PDF were removed: **4,720,087,667 bytes**
-(about 4.40 GiB of file contents). `cleanup.json` records the inventory.
-The current proposal source, pinned sources, model assets, environment and
-Git history remain available. All new results use ignored `output/` paths.
-
-Before removal, the earlier 20-trial summary was retained as
-`previous-batch.json`: 0/20 successes, 14 robot-table collision failures and
-6 timeouts; Wilson 95% interval [0, .161125]. Those old full trajectories and
-videos are no longer available. Historical paths must not be interpreted as
-current evidence locations.
-
-## Remaining work
-
-No physical G1 grasp/lift success is established. Hand/contact geometry,
-reference tracking and table-edge clearance need controlled validation.
-General instruction parsing, predictive clearance checks, real-time generation,
-Risk/Residual learning, counterfactual controller snapshots, verified teacher
-corrections, train/evaluation splits and the full comparative suite remain
-unimplemented or unverified. `expert_valid=false` on these B0 records.
-The manual interface resets each JSON attempt; it does not implement the
-proposal's within-episode, at-most-two-correction interactive evaluation subset.
-
-## English-only project text
-
-Project documentation, terminal messages, generated summary labels, and the
-existing readable output summaries/logs were translated to English.
-`AGENTS.md` now requires English for project content and communication.
-Existing experiment measurements, request data, source hashes, and model
-provenance were preserved. Historical readable logs are translated presentation
-copies, rather than byte-identical original console output. The previous source
-archive was replaced with an English-only source archive.
-
-Validation: `tests-english.log` records the regression suite. A Unicode Han scan
-covers first-party source, documentation, configuration, tests, and generated
-text outputs, excluding Git internals, installed dependencies, upstream sources,
-model assets, and binary recordings. No Chinese text remains in that scope.
-
-## Model loading before prompt acceptance or execution
-
-Both batch and manual entry points now preload SONIC, ARDY, and the text encoder
-before accepting or executing prompts. Completion prints a prominent
-`ALL MODELS LOADED` banner. Manual input stays disabled until loading finishes;
-batch attempts start afterward. Startup status and wall time are written to
-`startup.json`; a loading failure accepts no prompt and executes no attempt.
-Planning-only mode still loads no models. Loading uses the same worker thread
-as subsequent generation, reusing the initialized service.
-
-`./run.sh tests` passed all 50 tests; the log is `output/tests-preload.log`.
-New tests verify model reuse without generating a warm-up motion, manual
-startup ordering with and without GUI, and failure behavior in both modes.
-Batch ordering is also asserted. These startup tests use mocked model loaders;
-full model inference was not rerun for this orchestration-only change. Earlier
-physical and GUI evidence above remains historical. Whitespace checks passed.
-
-## Grounded approach without vision — 2026-10-03
-
-The grasp protocol now starts farther back and inserts approach/settle before
-the five hand phases. The default scene uses root X=-.36 m, table front X=.31 m,
-and a target root X=-.11 m: 0.25 m of approach with a 0.42 m final root standoff.
-Positions are initial conditions or ARDY constraints, never root teleports during
-execution. Grounding reads current MuJoCo table/block/root state and logs world
-and base-relative coordinates. No image is supplied to ARDY or SONIC.
-
-ARDY receives its pinned Root2DConstraintSet with explicit MuJoCo XY to ARDY XZ
-mapping and history-offset frame indices. Walking does not pin the feet. The
-settling check requires actual position/heading tolerance, low root speed, and
-both feet on the floor continuously before reach. Standing anchors are captured
-again after arrival. The unchanged 30-second trial budget includes approach.
-This is a new pilot scene/protocol, not a prompt-only improvement claim.
-
-Evidence is under
-[`review-approach-20261003-0406`](../output/review-approach-20261003-0406/).
-`check.log` records passing complete-asset and MUSA operator checks;
-`smoke/report.json` records a passing synthetic reference smoke check.
-`tests-final.log` records 54 passing tests, including translated-scene grounding,
-state-dependent targets, initial root placement, root waypoint axes/headings,
-future frame indices, and position/heading/speed/two-foot arrival checks.
-
-Two physical trials used `--grasp --batch 2 --seed 42 --cube-xy .40 -.22` on
-MUSA device 1 with the frozen checkpoints:
-[`batch-20261003-040615-951835`](../output/batch-20261003-040615-951835/summary.md).
-
-| Seed | Approach result | Final task result |
-| --- | --- | --- |
-| 42 | Passed the configured near-table limit at 4.72 s; safely stopped | Failed: approach_too_close |
-| 43 | Arrived and settled; root error .05368 m, heading error .15858 rad, speed .00601 m/s, both feet on floor | Failed at 13.12 s in lower: right_hand_middle_1_link contacted table |
-
-The seed-43 rollout was also rendered at 5 FPS for inspection:
-[video](../output/batch-20261003-040615-951835/attempt-00002/vision/video.mp4).
-`render.log` records 66 RGB/video frames; the renderer restored saved states and
-did not supply images to either model.
-
-There were **0/2 grasp successes**. Seed 43 establishes one physical
-approach-and-settle example; it does not establish general approach reliability
-or successful grasping. Its subsequent reach finished without a prohibited
-contact, but lowering still collided. Initial proximity is therefore not a
-sufficient explanation for all table collisions.
-
-For seed 42, ARDY's generated path ended near X=-.11486 m, close to the requested
-X=-.11 m, while the executed root reached X=-.00468 m before the standoff stop.
-The pinned SONIC G1 observation mode does not consume world root XY; a correct
-ARDY root path does not guarantee exact executed global displacement. This is
-why physical arrival checks are required.
-
-A temporary variant switched to settle immediately upon entering the target
-region. It was tested with the same seeds and position in
-[`batch-20261003-041130-432721`](../output/batch-20261003-041130-432721/summary.md).
-Seed 42 still crossed the standoff limit (4.76 s); seed 43 stopped 8.35 cm from
-the target (6.56 s) and failed arrival. This variant was removed because it
-interrupted gait without improving arrival. The final implementation executes
-the approach clip with the standoff guard, then verifies settlement before reach.
-All four trial records are retained, including the rejected variant's failures.
-
-Walking and hand-clearance calibration remain necessary. No model weights,
-SONIC observation configuration, finger gains, or prohibited-contact rules were
-changed, and no grasp-success or training-data eligibility claim is made.
-
-
-## Preparation, second-precision names and clearer video — 2026-10-03
-
-Implemented `approach -> settle -> prepare -> reach -> lower -> close -> lift -> hold`.
-Preparation is requested only after .4 s of continuous arrival/heading/speed and
-double-foot-contact acceptance. It conditions an 8-degree waist pitch through
-ARDY, holds the wrists back, then checks continuous stability again before
-reaching. The pinned G1 has no movable neck. This implements the phase sequence
-and a bounded nominal posture goal, not verified gaze targeting or grasp success.
-Torso targets remain shared nominal inputs; learned corrections remain arm-only.
-
-Session names now use Asia/Shanghai `batch-YYMMDD-HHMMSS` and
-`manual-YYMMDD-HHMMSS`. Atomic directory allocation waits for the next available
-second on a collision; it cannot overwrite a previous session. Existing evidence
-paths are preserved. Repeated render receipts retain a finer unique suffix.
-Default video output is 640x480 at 25 FPS with H.264 CRF 18. Collection and
-rendering remain separate.
-
-Evidence is under [`review-prepare-261003`](../output/review-prepare-261003/).
-`commands.json` records the commands; individual plans and reports preserve
-source/model hashes, settings and dependency versions.
-
-- `tests-final.log`: 56 tests passed, including torso conditioning frame/joint
-  mapping, unchanged hand goals during preparation, invalid torso inputs, and
-  preservation of both plans when second-resolution session names collide.
-- `smoke/`: synthetic 9-to-17-frame reference conversion passed. This does not
-  validate physical grasp success.
-- `check.log`: complete local assets/pinned sources and MUSA primitive checks
-  passed. Actual full-model execution is evidenced separately below.
-- Python syntax parsing, English-content scan and `git diff --check` passed.
-  A host bytecode-writing check encountered container-owned cache permissions;
-  syntax was checked without writing bytecode and container tests passed.
-
-Two actual frozen ARDY/SONIC trials with block XY=(.40,-.22), seeds 42/43 and the
-historical .42 m standoff are saved in
-[`batch-261003-050532`](../output/batch-261003-050532/summary.md): **0/2 successes**.
-Seed 42 stopped at 4.72 s for approach overshoot. Seed 43 passed the first
-stability gate at 7.96 s, then stopped at 10.14 s after preparation: position
-error rose from .0537 to .0824 m and heading error from .1586 to .2532 rad.
-Both feet contacted the floor, but the complete second gate failed, so reach
-was never generated. This run predates the more specific `prepare_target_drift`
-label; its original report retains `approach_target_missed`.
-The final requested waist goal was .1396 rad; the final generated joint
-reference was .3112 rad and the measured joint was .0050 rad. Preparation
-tracking is therefore **not verified**. Do not describe the goal angle as an
-achieved physical inclination. No limits or gates were relaxed to pass this run.
-
-A separate closer-standoff pilot, .22 m with the same seeds/block XY, is saved in
-[`batch-261003-051057`](../output/batch-261003-051057/summary.md): **0/2 successes**.
-Seed 42 overshot at 4.70 s; seed 43 missed the arrival target at 7.96 s. This
-candidate is not adopted as the default or presented as an improvement. The
-configurable standoff range now includes .20-.55 m for validation experiments;
-the existing .42 m default still needs workspace calibration. These four trials
-are interface/feasibility pilots, not the proposal's paired method evaluation.
-
-`reachability.json` analyzes the earlier
-`batch-20261003-040615-951835/attempt-00002` at 7.96 s. The right
-shoulder-to-wrist chain length sum is .4104 m; distances from that shoulder to
-the nominal reach/lower goals are .4679/.5395 m. With that fixed shoulder,
-these goals exceed even a geometric reach upper bound. Joint limits, hand
-orientation and collisions would restrict reach further. This diagnoses one
-recorded stance; it does not certify alternative stances or a complete workspace.
-Initial backoff and final grasp distance must be calibrated separately.
-
-The new-resolution [review video](../output/batch-261003-050532/attempt-00002/vision/video.mp4)
-was rendered with `--fps 5` for review speed while using the new default 640x480
-resolution. All 51 H.264 frames were decoded successfully; duration 10.2 s,
-CRF 18, saved in `video-decode.json` and the render report. `video-review.jpg`
-contains inspected frames. The normal render default remains 25 FPS.
-
-The assignment-aligned improvement plan is recorded in [grasp.md](grasp.md):
-calibrate shared approach reachability, grasp frame and complete finger clearance;
-then evaluate learned predictive arm correction under the proposal's frozen
-nominal/target-bias/action-latency conditions. Contact-dependent alignment gates,
-teacher branching, learning and perturbation evaluation remain planned.
-No successful physical grasp has been established by these changes.
-
-## State-based acquisition checkpoint — 2026-10-03
-
-Evidence is under `output/review-b0-recovery-261003/`. This is calibration,
-not the planned paired B0/P evaluation. The earlier failures above are unchanged.
-
-The frozen SONIC controller followed an official pinned walking reference in
-`known_walk` without falling (mean body-joint RMSE .0961 rad), and a static arm
-reference in `static_arm` (RMSE .0561 rad). These controller diagnostics bypassed
-ARDY and are not complete task trials. Root-path and explicit-footstep ARDY
-pilots exposed under-travel: satisfying a generated root path does not establish
-physical arrival. The unused experimental footstep and guidance-weight interfaces
-were removed from production; their diagnostic source snapshot is retained with
-the outputs.
-
-Two **hand-only** frozen ARDY–SONIC trials passed the existing physical assessment:
-
-| Trial | Lowest-point maximum clearance | Continuous hold | Video |
-| --- | --- | --- | --- |
-| `measured-hold-ardy-wrist-2` | .1266 m | 5.315 s | [Hand trial 2](../output/review-b0-recovery-261003/measured-hold-ardy-wrist-2/vision/video.mp4) |
-| `measured-hold-ardy-wrist-3` | .1311 m | 5.310 s | [Hand trial 3](../output/review-b0-recovery-261003/measured-hold-ardy-wrist-3/vision/video.mp4) |
-
-Both use a free robot root, the original dynamic 6 cm/80 g block, articulated
-fingers, frozen models, and the original contact/clearance/hold requirements.
-There is no attachment, teacher, direct IK body execution, or camera input.
-All 435/432 H.264 frames were decoded at 640x480 and 25 FPS; receipts are in each
-`vision/video-validation.json`. Close-up stills were inspected separately.
-The same hand-only pilot also includes seed 0 failing to retain the block and
-seed 1 contacting the table: **2/4**, with walking omitted. Its `task_success`
-field assesses only the recorded hand scope. Neither positive case establishes
-complete B0 success or verified expert-data eligibility.
-
-The initial complete protocol pilots `full-pipeline-00/02/03/04` produced **0/4**.
-Seeds 0 and 4 passed walking, continuous double-foot settlement, and preparation,
-but missed hand alignment. Seeds 2 and 3 missed arrival. Seed 0's measured arrival
-error was .0201 m after settlement and .0364 m after preparation. Its
-[partial full-task video](../output/review-b0-recovery-261003/full-pipeline-00/vision/video.mp4)
-shows that progress and the failed hand approach. Four lower-goal calibration
-trials also failed (two missed alignment, two contacted the table). Two trials
-using canonical full-body preparation constraints failed preparation settlement;
-that variant was not adopted. These ten full-task pilots vary calibration
-settings and must not be pooled into a claimed held-out success rate.
-
-The integrated checkpoint adopts initial parked arms, .45 m extra backoff,
-.22 m final standoff, a faster two-step prompt, measured standing anchors,
-pre-curled fingers, a wrist-frame acquisition gate, and a checked measured-pose
-hold through SONIC before closing. Settle/close/hold no longer resample motion.
-Lift preserves the measured grasp orientation and requests a .14 m wrist rise.
-A missing acquisition or sustained opposing contact ends the trial explicitly.
-These are shared nominal task rules; they neither modify the frozen policy's
-normalization pose nor expand the future learned arm mask. Full-task success
-of this integrated checkpoint is still unverified.
-
-Checkpoint validation: `checkpoint-tests-final.log` records **59 passing tests**,
-including RGB/MP4 rendering, acquisition geometry, immutable policy defaults,
-and a measured reference hold that does not mutate physical state.
-`checkpoint-smoke/` passed synthetic 9-to-17-frame reference conversion; it does
-not establish model compatibility or task success. The first new hold test used
-an inappropriate exact comparison across float64-to-float32 conversion; the
-corrected tolerance check passed. English-content and diff-whitespace checks
-passed. The asset/backend and actual frozen-model evidence remains distinct
-from these synthetic checks.
-
-## Direct-start manipulation calibration — 2026-10-03
-
-A direct grasp calibration uses `--direct-start` to place the free base at the
-grounded approach target in the scene's initial condition and checks position,
-heading, speed, and double-foot support throughout a two-second stand. It must
-remain ready for at least .4 continuous seconds before manipulation starts, then
-omits approach, settle, and preparation. SONIC still executes all subsequent
-motion; the robot root remains free. This calibration does not measure walking
-or establish complete B0 success. The block remains dynamic and camera images
-remain outside inference.
-
-Evidence is in `output/batch-261003-083431/` (standoff .22 m),
-`output/batch-261003-083920/` and `output/batch-261003-084351/` (standoff .20 m).
-All four closer-standoff trials used block XY=(.40,-.22), frozen ARDY and SONIC,
-and seeds 42–45. Their combined result was **2/4** (Wilson 95% interval
-[15.0%, 85.0%]):
-
-| Seed | Result | Evidence |
-| --- | --- | --- |
-| 42 | Success; 10.2 cm maximum block clearance, 2.01 s continuous hold | [Video](../output/batch-261003-083920/attempt-00001/vision/video.mp4) |
-| 43 | Stopped during close after right middle finger contacted the table; 1.1 mm penetration | [Video](../output/batch-261003-083920/attempt-00002/vision/video.mp4) |
-| 44 | Stopped during close after right middle finger contacted the table; 1.3 mm penetration | [Video](../output/batch-261003-084351/attempt-00001/vision/video.mp4) |
-| 45 | Success; 11.7 cm maximum block clearance, 2.01 s continuous hold | [Video](../output/batch-261003-084351/attempt-00002/vision/video.mp4) |
-
-Both successes maintained opposing finger contact throughout the required hold;
-no slipping was observed. Finger gains and targets were unchanged. The failures
-share one prohibited contact, so collision rules were not relaxed. At .22 m,
-the seed-42/43 pair failed before acquisition: the block was 4.8–6.1 cm below
-the wrist frame, outside the existing 4 cm lower acquisition bound, with no
-thumb opposition. Reducing standoff to .20 m allowed all four later trials to
-reach acquisition, but did not eliminate close-phase finger/table collisions.
-No grip-force increase was evaluated because neither successful trial slipped.
-Matched seed-43/44 variants tested distal index/middle targets held at their
-1.3-rad preshape, then wrist roll of +90 degrees and -90 degrees during reach
-and lower. The distal-curl variant retained the same middle-finger/table
-collision (`batch-261003-085937`). The +90-degree roll moved the block outside
-the positive wrist-lateral acquisition region (`batch-261003-090500`); the
--90-degree roll entered the region but did not establish sustained opposing
-contact (`batch-261003-090919`). None was adopted. The selected .20 m setup
-retains the original closure targets and upright wrist orientation.
-
-The shared validator, target clipping, torque clipping, and velocity gate apply
-to all 29 body joints; no per-joint exception was introduced. A test checks
-reference clipping across all 29 joints. `./run.sh tests` passed with **61 tests**
-after restoring the selected controller settings. MUSA loaded the pinned full
-models for all twelve direct-start attempts, including the unsuccessful
-variants. Rendering for seeds 42 and 43 completed at 640x480 and 10 FPS, with
-receipt `batch-261003-083920/render-261003-091951-990222.json`. Seeds 44 and 45
-were rendered at 640x480 and 25 FPS; their receipt is
-`batch-261003-084351/render-261003-084814-808165.json`. The six
-selected-configuration attempts are exploratory calibration evidence only, not
-the planned paired evaluation; the two successes cannot be counted as full B0
-trials.
-
-## Allowed hand contact, optional walking and complete hold recording — 2026-10-03
-
-The agreed pilot contact policy now permits both hands, fingers, and palms to
-contact the tabletop and table legs. The pinned G1 attaches its palm meshes to
-the wrist-yaw bodies, which are included in this allowance. Contact physics
-remains active; forearm, torso, leg, block-floor, non-foot robot-floor, and
-non-right-hand robot-block contact stops remain. Allowed hand-table contact is
-counted per 200 Hz physics sample and cannot replace finger-block opposition
-in the success criterion. Historical results above retain their original rules.
-
-`--grasp` now starts the free robot at the grounded table target by default,
-checks continuous stability during the two-second stand, then runs the five
-hand phases. `--walk` adds the existing approach, settle, and preparation path;
-`--direct-start` remains a compatibility alias for the default start. Scene
-settings list the actual phases and declare the hand-table contact allowance.
-Legacy plan parsing preserves whether walking was originally selected; changed
-source hashes still prevent cross-version resume.
-
-The earlier seed-42 recording in `batch-261003-083920` ended at 14.20 s,
-with only .02 s in its configured hold phase. Seed 45 in
-`batch-261003-084351` ended at 13.98 s while still in lift. Both stopped when
-the two-second success threshold was reached. The executor now completes lift
-and the configured three-second hold before ending a successful trial, while
-continuing shared failure checks and respecting the 30-second timeout. A later
-fall or prohibited contact invalidates an earlier success. Rendering cannot
-restore motion absent from the old saved states.
-
-Validation artifacts are in `output/review-contact-hold-261003-CvjmWg/`.
-`tests-final.log` records **65 passing tests**, including actual MuJoCo contact
-fixtures for both hands/palms, prohibited non-hand table contacts, default and
-optional walking selection, full hold scheduling after early success, later
-failure invalidation, and RGB/MP4 fixture rendering. Scheduler fixtures do not
-establish model compatibility or physical task success. Bash syntax,
-documentation consistency, English-content, and diff-whitespace checks passed.
-The launch source snapshot matches every source hash in the collection plan.
-
-The actual frozen ARDY/text stack ran on MUSA, with frozen SONIC on ONNX Runtime
-CPU, in a fresh two-episode manipulation pilot:
-
-```bash
-./run.sh batch --grasp --batch 2 --seed 42 --cube-xy .40 -.22 --table-standoff .20 --output-root output/review-contact-hold-261003-CvjmWg
-./run.sh render --run output/review-contact-hold-261003-CvjmWg/batch-261003-121121 --all
+# Measured Results and Verification Limits
+
+This page summarizes retained evidence and current conclusions. Per-attempt
+measurements, source hashes, original plans, logs and rendered states remain
+in the ignored output storage; they are not a chronological repository log.
+Paths below are relative to `output/`, whose canonical server target is
+`/data/group3/dl-output/`.
+
+## What the evidence establishes
+
+- Frozen ARDY and Kimodo generate named G1 body references and run through the
+  same SONIC/MuJoCo task harness.
+- The final real-rollout dataset passes Risk/Residual supervision availability
+  and the frozen physical label guard.
+- Risk training, frozen-Risk Residual training and validation gate selection
+  completed on MUSA.
+- P runs through the original batch entry, producing causal gated arm
+  corrections during actual SONIC/physics execution.
+- The fixed 61020–61079 B0/P cohort shows **no aggregate grasp-success improvement**.
+
+Operator checks, synthetic tests, offline model metrics, visual replay and
+physical task outcomes establish different things. A passing readiness audit
+or small supervised validation loss is not physical task success.
+
+## Dataset evidence
+
+Artifacts:
+
+```text
+risk-quality-final-261007f/dataset/manifest.json
+risk-quality-final-261007f/dataset/report.json
+risk-quality-final-261007f/dataset-audit.json
+risk-quality-retrain-261007f/final-label-gate.json
 ```
 
-Both episodes used the same .20 m calibration standoff as the earlier
-seed-42/43 pair, without walking, teacher intervention, or user corrections.
-The block and root remained free; fingers and frictional contacts performed
-the lift. This is **2/2** exploratory manipulation success (Wilson 95% interval
-[34.2%, 100.0%]), not the planned held-out evaluation or a walking result.
-
-| Seed | Trial length | Continuous successful hold | Configured final hold | Allowed hand-table samples | Maximum block clearance |
-| --- | --- | --- | --- | --- | --- |
-| 42 | 17.18 s | 4.41 s | 14.18–17.18 s | 0 | .1021 m |
-| 43 | 17.76 s | 5.31 s | 14.76–17.76 s | 471 | .1538 m |
-
-Seed 43 now completes rather than stopping on the historical finger/table
-contact. Each final hold contains 600 physics samples, covering its full
-three-second duration. Reports preserve dependency versions, commands, seeds,
-model/scene hashes, reference artifacts, task trajectories, and full saved
-states. Dependencies were torch/torch_musa 2.9.1, MuJoCo 3.2.7, NumPy 1.26.4,
-SciPy 1.15.3, ONNX Runtime 1.23.2, and Transformers 5.8.1.
-
-Both 640x480, 25 FPS H.264 videos decoded successfully: **430 frames / 17.20 s**
-for [seed 42](../output/review-contact-hold-261003-CvjmWg/batch-261003-121121/attempt-00001/vision/video.mp4),
-and **445 frames / 17.80 s** for
-[seed 43](../output/review-contact-hold-261003-CvjmWg/batch-261003-121121/attempt-00002/vision/video.mp4).
-`hold-validation.json` verifies full three-second hold intervals, terminal saved
-states, decoded frame counts, simulation-time video mappings, launch source
-hashes, and free robot/block joints. The last selected video state is within
-one 25 Hz frame of the final saved state. Hold onset, midpoint, and final decoded
-frames were visually inspected in
-[hold-review.png](../output/review-contact-hold-261003-CvjmWg/hold-review.png).
-The block remains above the tabletop in all selected hold frames. Rendering
-restored saved states without stepping physics; its wall time is recorded
-separately from simulation time and model latency. The renderer receipt is
-`batch-261003-121121/render-261003-121504-843333.json`.
-
-## Failure audit, contact drift and open-hand approach — 2026-10-03
-
-The available `output/batch-261003-122608` contains 20 physical episodes, seeds
-0–19, sampled block positions, .22 m standoff, historical finger gains 4/.2,
-distal-finger preshape and three-second final hold. Read-only analysis found:
-
-| Recorded outcome | Episodes | Diagnosis |
-| --- | --- | --- |
-| `grasp_alignment_missed` | 8 | Block center remains below the acquisition region |
-| `grasp_not_acquired` | 5 | Closing produces transient rather than sustained opposition |
-| `timeout` | 3 | Opposition acquired on the table is lost during lift; block does not clear 5 cm |
-| Recorded success | 4 | Seeds 2, 12, 16, 18 reach two seconds, but 12/16/18 later drop |
-
-The original labels and trajectories are preserved. Only seed 2 remains held at
-the original final frame: **1/20 retained**, versus **4/20 threshold events**.
-`audit/audit.json` stores original report/task hashes and per-phase forces and
-motion metrics. All new artifacts are in `output/grasp-review-261003-IR6tcT/`;
-the English [analysis report](../output/grasp-review-261003-IR6tcT/analysis.md)
-and [clearance/force plot](../output/grasp-review-261003-IR6tcT/recorded-drops.png)
-show the distinction.
-
-During lift the wrist and block oscillate together. During subsequent hold,
-wrist displacement is only about 7–11 mm, while the three dropped blocks move
-about 10–11 cm relative to the wrist. Opposing normal force is approximately
-19 N before release. A restored seed-16 hold snapshot has tangential loads of
-about .4 N at each opposing contact with sliding coefficient 1. This supports
-soft-contact drift as a material cause of slow slip, rather than inadequate
-normal force alone. MuJoCo's [official slip guidance](https://mujoco.readthedocs.io/en/stable/modeling.html#preventing-slip)
-recommends elliptic cones, larger impedance ratio and accurate Newton solves
-for this numerical issue. Simulator calibration is not evidence of real motor
-or material behavior.
-
-Diagnostics reran from reset through frozen SONIC, shared checks, articulated
-fingers and a dynamic block. In the initial four-seed ten-second hold control,
-all four historical threshold successes eventually dropped. Larger stiffness
-and damping alone did not prevent that. Uniformly curling all closure targets
-20% further also failed; those targets were not adopted. A deeper wrist goal
-and stricter acquisition threshold failed all eight later centered-target
-pilots; those goals were not adopted either. Gaussian arm-reference smoothing
-had mixed wrist vibration results. Slower saved-reference playback increased
-wrist vibration in the two tested clips, so neither filter nor replay retiming
-was adopted. `comparison.json` records the measured vibration metrics and the
-high-pass definition.
-
-An elliptic Newton solver with `impratio=10`, `tolerance=1e-10` and no NoSlip
-post-processing eliminated later drops for the acquired seed-16/18 grasps in
-the fixed-reference controls: continuous hold exceeded 12 s. Acquisition still
-failed for some references because altered ground/contact dynamics change
-tracking. Those controls are explicitly saved-reference diagnostics; they do
-not establish closed-loop ARDY task success. Their references are hashed and
-controller history/buffers are recreated by re-executing from episode reset.
-No visual replay state was treated as a complete controller branch checkpoint.
-
-A fresh paired calibration then used all original 20 prompts, block positions
-and seeds. ARDY generated every moving phase from current executed history;
-there were no saved-reference substitutions, teacher calls or user corrections.
-Both configurations used .20 m standoff, 6/.4 finger gains, elliptic contacts,
-unchanged closure targets/acquisition region, 4.8 s generated lift, and a
-complete ten-second final hold within the existing 30-second timeout. The only
-factor between them was the reach/lower finger posture:
-
-| Approach posture | Retained success | Wilson 95% interval | Successful seeds |
-| --- | --- | --- | --- |
-| Historical distal preshape | 2/20 (10%) | [2.8%, 30.1%] | 3, 7 |
-| Fully open until alignment | 6/20 (30%) | [14.5%, 51.9%] | 0, 4, 7, 10, 12, 19 |
-
-The paired difference is **+20 percentage points**, with an episode bootstrap
-95% percentile interval **[0, +40] percentage points** (20,000 resamples,
-seed 20261003). The interval includes zero. This exploratory calibration
-supports the selected default but does not establish a universal advantage or
-replace held-out evaluation. The six open-hand successes complete the entire
-ten-second hold. Its remaining failures are nine alignment failures, four
-timeouts and one later drop, all retained in the denominator.
-
-Nominal ARDY and physical SONIC errors both contribute to remaining alignment
-failures. In three stopped episodes, nominal wrist FK is roughly 4–6 cm above
-the requested goal and the executed wrist is another 2–4 cm above that nominal
-FK. The requested wrist height is about .715 m, while execution remains at
-.79–.80 m. Finger strength cannot fix this. These position checks used restored
-executed root pose and named reference body joints; they are diagnostics of the
-recorded state, not proof of universal workspace limits. Lift oscillation
-remains a limitation; the selected hand/contact changes do not claim to
-eliminate all frozen-model tracking vibration.
-
-The selected defaults use open fingers, stiffness 6 and damping .4 under the
-original motor and joint bounds, elliptic contacts, .20 m standoff, a 4.8 s lift
-and a five-second final hold. The shorter default hold allows the walking
-variant to fit the shared 30-second budget. New reports retain the original
-`success_threshold_reached` event but require `retained_at_end` for task success;
-`grasp_lost_after_success` exposes a later drop onto the table. All future
-methods must share these calibrated scene, controller and assessment settings.
-Finger limits, mass, sliding/torsional/rolling coefficients, timestep, free-base
-and dynamic-block behavior are unchanged. No attachment or extra support force
-was introduced. Protocol versions with different physics or retention rules
-must not be pooled without identifying the change.
-
-Commands and source snapshots are stored alongside the runs. For the paired
-calibration:
-
-```bash
-MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh python scripts/calibrate_grasp.py --source output/batch-261003-122608 --out output/grasp-review-261003-IR6tcT/paired20 --seeds 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 --variants strong open --standoff .20 --lift-seconds 4.8 --fresh-motion
-```
-
-`paired20-source/` matches the complete source hash set in each paired plan.
-The final default command, `./run.sh batch --grasp --batch 3 --seed 0
---output-root output/grasp-review-261003-IR6tcT/default`, independently verified
-the new CLI defaults: seed 0 succeeded at 20.50 s with 8.53 s continuous hold;
-seeds 1 and 2 failed alignment. The command correctly returned status 1 for
-those physical failures. `default-source/` matches its launch plan. Both
-default and paired reports contain dependency versions, model/scene hashes,
-prompts, seeds, trajectories, fingers, forces, full states and simulation/wall
-time. `tests-final.log` records **67 passing tests**, including late-drop
-assessment, contact-solver configuration, CLI bounds and actual RGB/MP4 fixtures.
-`smoke/` passed synthetic 9-to-17-frame packet/reference conversion, which is
-not a model or physical grasp acceptance test. The diagnostic scripts remain
-outside the declared baseline upload archive.
-
-The retained seed-12 paired rollout was rendered with `./run.sh render --run
-output/grasp-review-261003-IR6tcT/paired20/open-seed-012 --distance 2.2`.
-The decoded H.264 video has 657 frames at 25 FPS (26.28 s), covers the last
-saved simulation state at 26.24 s, and includes the complete ten-second final
-hold. `improved-hold-review.png` visually confirms the block remains raised
-at hold start, five seconds into hold, and the last saved frame.
-`evidence-validation.json` verifies all 20 original report/task hashes remain
-unchanged, all 40 paired source hash sets match their snapshots, and the
-compiled scene preserves motor/joint limits, friction, body masses, timestep,
-and free root/block joints. Seed 12 has opposing contact throughout all 2,000
-final-hold physics samples and 13.515 s maximum continuous hold. The validator
-command and SHA-256, video hash, and frame/duration measurements are recorded
-in that receipt. These checks establish recording completeness and physical
-configuration consistency; they do not remove the remaining tracking errors.
-
-## Causal P context and Track4 video set - 2026-10-04
-
-The adaptive torso-constraint calibration was run with fresh motion generation
-and four held-out seeds:
-
-```bash
-MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh python scripts/calibrate_grasp.py \
-  --source output/batch-261003-122608 --out output/grasp-review-261004-torso \
-  --seeds 1 2 5 6 --variants open --standoff .20 --lift-seconds 4.8 \
-  --hold-seconds 5 --fresh-motion
-```
-
-All four trials reached the alignment/contact phases but timed out at 30 s;
-none reached the 5 cm clearance threshold, with maximum clearance about
-0.00175 m and zero retained hold samples. This is a physical failure result,
-not a successful grasp claim. The run is useful because the new torso limits
-remove the earlier waist-roll reference violations while exposing the remaining
-tracking/contact problem: joint tracking RMSE is 0.088--0.097 rad, close/lift
-contacts are intermittent, and all four trials have zero contact force in the
-terminal hold after the block settles back on the table.
-
-The read-only analyzer accepted all four `open-seed-*` directories directly
-under this calibration run. Each `nominal_context.csv` has 1,500 rows at 50 Hz,
-strictly increasing frame/time values, ten causal lookahead offsets from 0 to
-0.9 s, 290 position columns, 290 velocity columns and 40 quaternion columns.
-The context contains current execution history, phase and planned finger
-commands plus nominal future references; it does not contain future executed
-states or teacher outputs. These checks establish the data contract needed by
-the next Risk/Residual implementation, not model quality.
-
-Per-attempt scene compilation was also checked directly from the recorded XML:
-the elliptic scene has `cone=1`, `impratio=10` and `tolerance=1e-10`; the legacy
-scene has `cone=0`, `impratio=1` and `tolerance=1e-8`. The execution runtime now
-recompiles the exact per-episode scene before simulation, so random block
-positions and contact settings cannot be silently replaced by the preload
-model.
-
-The Track4 B0 video set is available in the ignored output artifacts:
-
-* Success, complete hold: `output/grasp-review-261003-IR6tcT/paired20/open-seed-012/vision/video.mp4` (657 frames, 25 FPS, 26.28 s).
-* Success, independent example: `output/grasp-review-261003-IR6tcT/paired20/open-seed-004/vision/video.mp4` (640 frames, 25 FPS, 25.60 s).
-* Failure with late loss: `output/grasp-review-261003-IR6tcT/paired20/open-seed-003/vision/video.mp4` (318 frames, 12.5 FPS, 25.44 s).
-* Fresh timeout after torso constraints: `output/grasp-review-261004-torso/open-seed-001/vision/video.mp4` (376 frames, 12.5 FPS, 30.08 s).
-
-The additional renders were produced with `./run.sh render --run <attempt>
---distance 2.2`; the failure and fresh-timeout clips used `--fps 12.5` to keep
-software rendering practical. Rendering restores recorded states and does not
-step physics or alter the reports.
-
-The first three are B0 examples; the fresh timeout is the current diagnostic
-failure. P videos are deliberately not labeled as available because the P
-networks and training/evaluation entry point are not implemented yet. The exact
-implementation gate, causal inputs, branch restoration rules, arm-only output
-mask, bounded residual and shared evaluator are specified in
-`docs/track4_requirements.md` and `docs/p_interface.md`. Once P exists, its
-success and failure videos must use the same scene, SONIC, evaluator and
-recording path as B0.
-
-After these changes, `./run.sh tests` completed with 67 passing tests and
-`./run.sh smoke --out output/grasp-review-261004-smoke-final` passed the
-synthetic reference/packet check. Neither check establishes full ARDY/SONIC
-compatibility or physical grasp success on the supported MUSA stack.
-The required `./run.sh check` also passed the MUSA device, pinned ARDY/SONIC
-source revisions, all local manifests, and the linear/layer-norm/attention
-backend primitives. `./run.sh sonic --out output/grasp-review-261004-sonic-check
---repeats 5` passed the frozen SONIC encoder and decoder ONNX operator probe on
-CPU; its synthetic inputs and disconnected graphs are not a control-loop or
-physics result.
-
-## Risk/Residual source merge and synthetic checks — 2026-10-05
-
-The local `risk_residual/` learning source was integrated into the canonical
-server tree without replacing the newer B0 grasp, execution, scene and context
-logging changes. Its phase encoding was updated for the server's nine-phase
-task vocabulary; the versioned history schema is now 119 fields. An optional
-correction provider and shared arm-only reference checks were added. B0 does
-not import the learning package. `docs/learning.md` lists the missing collector,
-verified teacher, observation builder and P trial entry point.
-
-On the S4000 host, `./run.sh tests` passed **78 tests**; the log is
-`output/merge-261005-tests.log`. `./run.sh check` passed pinned assets and MUSA
-operator checks (`output/merge-261005-check.log`). The baseline synthetic
-reference smoke passed (`output/merge-261005-reference-smoke/report.json`).
-The reduced-width synthetic Risk then Residual training check passed on MUSA
-(`output/merge-261005-p-musa/report.json`). Its fixture contains no measured
-grasp data or physics. These checks establish a working learning software
-pipeline and optional correction interface; they do not establish task success,
-teacher validity or full P control-loop behavior.
-
-An actual unprompted B0 standing episode also completed after the merge:
-`output/batch-261005-042037/attempt-00001/report.json` records frozen model
-loading, 100 SONIC control frames, 2.00 s of MuJoCo physics, and no task
-success value because no grasp task was requested. The separate scene helper
-completed against the pinned SONIC assets (`output/merge-261005-scene.log`).
-
-## Paired teacher and rollout conversion pilot — 2026-10-05
-
-The first data collector replays saved ARDY references from a successful B0
-attempt through two full SONIC/MuJoCo episodes. It changes one bounded arm
-reference only in the perturbed nominal branch. A fingerprint of MuJoCo's
-integration state, SONIC history, reference buffer, planned reference and
-offset limiter at the activation decision must match before a pair is accepted.
-The scene XML and compiled model hashes must also match. This is a verified
-replay from reset, not an arbitrary mid-episode checkpoint restore.
-
-The source attempt was
-`output/grasp-review-261003-IR6tcT/paired20/open-seed-012`. The first pilot,
-`output/teacher-pair-261005-pilot-01`, used a 0.10 rad right-wrist-pitch
-offset during `lower`. The state pair matched and both branches succeeded;
-therefore it is not evidence of needed corrective intervention. This run used
-the initial collector version before the explicit `recovery_verified` field.
-
-The second pilot,
-`output/teacher-pair-261005-pilot-02/pair.json`, used a 0.15 rad
-right-shoulder-pitch offset after 0.2 s in `lower`. The activation states and
-physics models matched. The clean branch completed the task; the perturbed
-branch timed out after a maximum continuous hold of 1.875 s, below the 2 s
-success criterion. Its maximum block clearance was 0.1228 m. The pair reports
-`pair_state_verified=true`, `teacher_verified=true` and
-`recovery_verified=true`. These are two exploratory runs from one source seed,
-not a success-rate estimate or a test of the learned P controller.
-These existing branch reports retain the executor's old `method=B0` tag;
-`pair.json` and `effective_context.csv` identify the actual injected reference
-offset. Subsequent provider runs use `method=reference_correction_pilot`.
-
-The single-parent source plan is
-`output/teacher-pilot-source-plan-261005.json`. Running
-`experiments.build_dataset --inspect-only` loads both executed branches,
-restores recorded pre-decision MuJoCo states, builds 16-step history and
-eight-step future windows, and validates the generated arrays through the
-production `WindowDataset` loader in a temporary directory. With exploratory
-tracking thresholds `[.06, .06, .1, .1]` rad, the pilot had 524 windows,
-494 positive-risk labels, one recoverable correction sample and 10 stable
-zero-offset samples. With `[.02, .02, .1, .1]`, all 524 windows were positive
-and no stable sample remained. These values show threshold sensitivity; no
-threshold has been calibrated or frozen. No persistent train/validation/test
-dataset was written. Existing recorded attempts with complete context use one
-exact instruction identity, so they cannot form disjoint prompt groups across
-all three splits without new collection.
-
-After the final recovery and clean-identity changes, `./run.sh tests` passed
-all **84 tests**, including the GL rendering fixtures; the log is
-`output/teacher-pair-261005-tests.log`. The baseline reference smoke passed
-at `output/teacher-pair-261005-reference-smoke/report.json`. Its inputs are
-synthetic and its report correctly records that no physics was executed. The
-physical pair and single-parent loader audit above supply the separate
-measured evidence for this data collector. Full split conversion and learned
-P deployment remain unverified.
-
-## External output storage migration — 2026-10-05
-
-The S4000 host's `/home` filesystem had only about 15 GB available while
-`/data` had about 12 TB available. The administrator-created
-`/data/group3/dl-output` directory is owned by `group3:group3` with mode 2770.
-The existing `output/` tree was copied there with `rsync`: 943 regular files,
-4,147,245,327 logical bytes. A checksum-mode dry run reported no differences,
-and both trees had 943 regular files and approximately 3.9 GB allocated.
-The original tree remains at `/home/group3/dl-output-backup-20261005` and has
-not been deleted. `/home/group3/dl/output` is now a symlink to the `/data`
-directory.
-
-`docker/run-musa.sh` detects an external output symlink and mounts its resolved
-target at the same absolute path in the container. A no-simulation container
-check resolved `output` to `/data/group3/dl-output`, read the historical batch
-summary, confirmed it was writable, and showed the 13 TB `/data` filesystem.
-`python -m unittest discover -s tests -v` in `dl-musa-render:latest` passed
-85 tests with three optional RGB tests skipped. No new batch, training run, or
-risk/residual outcome was generated during this migration.
-
-## Batch data tooling checks — 2026-10-05
-
-The fixed-split planner, completed-batch indexer, resumable controlled pair
-wrapper and dataset supervision audit were added without changing B0 control.
-`configs/data/collection.json` proposes six English prompt groups and disjoint
-seed ranges for 120 train, 40 val and 40 test parent episodes. The planner's
-actual CLI wrote `output/data-collection-261005-code-ready`, with plan hash
-`690d6b1224d12743fbe445b7500a2c853abd278eb603e5d786572df114006ff1`.
-It wrote six standard B0 resume commands and reported `physics_executed=false`.
-None of those batch commands was executed during this code change.
-
-The supported S4000 container ran 98 unit tests in 5.103 seconds, with three
-optional RGB tests skipped and all remaining tests passing. The final log is
-`output/data-code-check-261005/unittest-final.log`. New regression tests cover
-seed overlap, implicit/explicit prompt identity, altered evidence, short and
-pending episodes, stopped grasp failures, pair resume without duplicate
-execution, interrupted and failed pair retention, zero teacher candidates,
-source history/backend settings, masked supervision counts, and a converted
-NPZ write/load round trip with an explicit not-ready Residual report. Pair
-execution in these tests is mocked; converted windows are temporary synthetic
-fixtures. These checks do not establish physical recovery, grasp success or
-generalization of the proposed prompt/perturbation configurations.
-
-With `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`,
-`python scripts/check_baseline.py --device musa` passed the installed dependency,
-pinned source, local weight and text-encoder compatibility checks. Its log is
-`output/data-code-check-261005/assets.log`. No new packages or models were
-downloaded. The converter now reports/skips only short or no-window parents
-when explicitly requested, while changed evidence and malformed streams still
-fail. Training refuses missing Risk classes or missing correction/identity
-categories in train or val before optimization. A real disjoint dataset,
-new physical pairs and the general corrective teacher remain unverified.
-
-## Premature acquisition repair — 2026-10-05
-
-The user collected `output/data-collection-261005-code-ready/batches/train-a`
-with the saved 60-episode B0 plan (seeds 10000--10059). All attempts completed;
-none succeeded. Reasons were 52 timeouts, seven `grasp_not_acquired` stops and
-one prohibited robot-table contact. The recorded acquisition wrist-frame Z
-ranged from -0.044987 to -0.038154 m, median -0.044182 m. The old lower gate
-was -0.045 m. Only one episode cleared 5 cm, for 0.87 s, below the required
-continuous two seconds. Task CSVs show contact during close followed by loss
-during lift and no opposing contact in terminal hold. These are genuine
-physical failures; reports and success criteria were preserved.
-
-`hand_alignment` now scales the vertical half-extent margin by one-third,
-instead of 1.5. For the 6 cm block, descent stops within 1 cm of the hand center
-instead of 4.5 cm. Lateral bounds, frozen models, finger commands/gains, torque
-limits, contact solver, free root/block, 5 cm/two-second success test, retention
-check and 30-second timeout are unchanged. The regression fixture rejects the
-observed premature -4.3 cm acquisition while accepting a centered block.
-
-Matched exploratory pilots used `--grasp --batch 3 --seed 10000
---hold-seconds 10`, so all three compare the same train seeds and block poses:
-
-| Configuration | Run | Retained successes |
-| --- | --- | --- |
-| Original gate | Original train-a attempts 1--3 | 0/3 |
-| Original source, `--acquisition-z-min -.01` | `output/grasp-fix-261005-z01-pilot/batch-261005-225145` | 1/3 |
-| Tight gate plus terminal-rotation position-goal candidate | `output/grasp-fix-261005-final-pilot/batch-261005-225720` | 0/3 |
-| Final default tight gate, original position goals | `output/grasp-fix-261005-acquisition-pilot/batch-261005-230417` | 1/3 |
-
-The final seed-10000 trial cleared about 9.82 cm and held continuously for
-12.56 s, remaining held at the 25.28 s end after the full configured ten-second
-hold phase. Seed 10001 failed to acquire stable opposing contacts; seed 10002
-reached the success threshold but later lost the block, and remains a failure.
-The final 1/3 Wilson 95% interval is approximately [6.1%, 79.2%]. This pilot
-diagnoses a common premature-close failure, not held-out generalization or a
-reliable production success rate. More lateral alignment and retention
-calibration remain necessary. Test seeds were not used for calibration.
-
-The position-goal candidate was withdrawn after physical verification: it
-retained no successful grasp and one generated lower replan violated the
-left-knee limit by 0.070 rad. The original checker correctly rejected it;
-the limit was not relaxed. Candidate source is preserved at
-`output/grasp-fix-261005-rejected-source/grasp.py`. Failed pilot reports remain
-intact. No large batch or Risk/Residual training was launched during the repair.
-
-The final server suite passed 98 tests with three optional RGB tests skipped,
-log `output/grasp-fix-261005-acquisition-suite.log`. A fresh collection plan
-`output/data-collection-261005-acquisition-fixed` contains the same six prompt
-groups and 200 parent budget, pinned to the final source. It executed no physics.
-Its plan hash is
-`9c9195bfc3404159f80e04befc179ebd00ce02e6abbd7102f45b090268cbd8d9`.
-The older code-ready and withdrawn-candidate plans cannot resume against this
-source; do not edit them to bypass their provenance checks.
-
-Offline RGB/MP4 rendering passed for original train-a attempts 1, 20 and 5
-(376, 376 and 120 frames respectively, 640x480 at 12.5 FPS), and for the
-successful Z-bound diagnostic attempt 1 (317 frames). MP4s are under each
-attempt's `vision/video.mp4`; receipts are
-`train-a/render-261005-225456-895898.json` and
-`grasp-fix-261005-z01-pilot/batch-261005-225145/render-261005-230503-688081.json`
-under output. Videos show simulation time, not model-generation wall latency.
-They were copied to the user's local `outputs/grasp-fix-videos` for inspection.
-
-## Completed 200-parent collection and cleanup — 2026-10-06
-
-The user completed the six fixed B0 plans with the acquisition repair. Before
-cleanup, all six summaries were `complete` with no pending attempts:
-
-| Group | Completed | Retained successes | Success rate |
-| --- | --- | --- | --- |
-| train-a | 60 | 23 | 38.3% |
-| train-b | 60 | 19 | 31.7% |
-| val-a | 20 | 10 | 50.0% |
-| val-b | 20 | 3 | 15.0% |
-| test-a | 20 | 9 | 45.0% |
-| test-b | 20 | 5 | 25.0% |
-| Total | 200 | 69 | 34.5% |
-
-These are trajectory collection results, not learned-model training or
-evaluation. No `manifest.json`, `sources.json`, `pair.json` or `.pt`/`.pth`/`.ckpt`
-learning artifact was present in output at inspection. Keep failed episodes
-alongside successes for Risk supervision and retain the fixed parent splits.
-
-At the user's explicit request, the completed directory was renamed from
-`data-collection-261005-acquisition-fixed` to `data-collection-261005` under
-output. Relative collection group paths and all immutable episode/plan files
-were retained. Before/after move file inventories matched, and the collection
-plan SHA-256 was unchanged. `commands.txt` was updated to the new absolute
-directory; `relocation.json` records the mapping without rewriting historical
-report paths or measurements. No collection, model inference or training was
-started during cleanup.
-
-The protected `batch-261003-122608` retains all 20 attempts and all 20 MP4s.
-Both manual video sessions were retained as unique user artifacts. Protected
-video SHA-256 values matched after deletion of the obsolete source plans,
-repair pilots, smoke artifacts and temporary logs. The deletion freed
-9,529,565,184 allocated bytes. Compact reports, original configurations and
-the rejected candidate source were saved under
-`/home/group3/dl-output-history/cleanup-261006/reports` first. The sibling
-`cleanup-receipt.json` lists every removed top-level item and protected video
-hash. Historical links to removed output reports now refer to this archive;
-raw old rollouts were deleted, and the separate storage-migration backup was
-outside the scope of this cleanup.
-
-The relocated collection passed `experiments.plan_data index`, producing
-`output/data-collection-261005/index/report.json` and `sources.json`. It checked
-source output hashes and fixed split ownership: 200 planned parents, 196
-candidates, 69 teacher candidates, zero pending and four unusable execution
-failures. The log is
-`/home/group3/dl-output-history/cleanup-261006/index-check.log`. Indexing loaded
-no policy and ran no physics; it did not write learning windows or establish
-Residual supervision readiness.
-
-## Real-data Risk training checks — 2026-10-06
-
-The completed nominal source index was converted with:
-
-```bash
-MTHREADS_VISIBLE_DEVICES=0 MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh \
-  python -m experiments.build_dataset \
-  --sources output/data-collection-261005/index/sources.json \
-  --tracking-thresholds .06 .06 .1 .1 --skip-ineligible --require risk \
-  --out output/dataset-261006-risk
-```
-
-Conversion passed with 24,163/8,589/9,235 train/val/test windows from
-116/40/40 parents. No further parents were skipped. The report records
-22,358/7,965/8,639 positive, 1,746/610/584 negative and 59/14/12 censored
-Risk windows. Risk readiness passed; Residual readiness failed with zero
-corrections in train and val. Stable windows total 639/236/212. These counts
-establish supervision availability, not independent sample size or model
-performance. Window labels come from nominal futures; test data was not
-used to select training parameters. The artifacts are
-`output/dataset-261006-risk/{manifest.json,report.json,train.npz,val.npz,test.npz}`
-and `output/dataset-261006-risk-build.log`.
-
-On installed PyTorch 2.9.1 / torch_musa 2.9.1, the 256-wide model with eight
-heads and dropout 0.1 initially failed in MUSA SDPA descriptor creation:
-`mudnnSetScaledDotProductAttentionDescriptorEx`. Selecting the SDPA math
-backend did not resolve the error. The learning-only encoder now uses
-explicit attention matrix products, softmax and dropout on MUSA while
-retaining projections, normalization, parameter names and all settings.
-The frozen baseline code, vendor environment and simulation were unchanged.
-
-Physical GPU 2 was selected with `MTHREADS_VISIBLE_DEVICES=2`; inside that
-container `MUSA_VISIBLE_DEVICES=0` is required. Setting the latter to 2
-incorrectly hid the sole selected device. The successful real-data
-64-sample train/backward/update and validation check is recorded in
-`output/risk-step-check-261006.json` (losses 1.98804 / 1.41695, unclipped
-gradient norm 6.11613). Its random initialization was not pinned and these
-numbers are compatibility evidence only.
-
-A subsequent seed-0 full epoch used the ordinary training entry point and a
-copy of `configs/learning/p.json` with only the epoch budget reduced to one
-(`output/risk-epoch-check-261006-config.json`). All 24,163 train and 8,589 val
-windows were processed, with 378 optimizer updates and 3,227,812 parameters.
-Training loss was 0.3159112456 and validation loss 0.1403171413; the measured
-training loop took 33.8171 seconds. `best.pt`, `last.pt`, `metrics.json` and
-`report.json` were written under `output/risk-epoch-check-261006`. Best
-checkpoint SHA-256:
-`019da1f15baf7e834d720bc267f6bad6b56ed6ed343e1d73042e728b148273c0`.
-The outer log is `output/risk-epoch-check-261006.log`. No test inference or
-physical Risk/Residual controller evaluation was performed.
-
-The one-epoch `best.pt` also reloaded through the strict production checkpoint
-loader and ran all validation batches in inference mode on physical GPU 4.
-At the fixed exploratory threshold 0.5, the 8,575 labeled validation windows
-gave TP=7,839, TN=500, FP=110 and FN=126 (14 censored windows excluded).
-Risk recall was 0.98418, specificity 0.81967 and balanced accuracy 0.90193.
-This check used no threshold selection and no test data; correlated windows
-and the exploratory labels limit the interpretation. The receipt is
-`output/risk-epoch-check-261006-validation.json`. It does not establish the
-proposal's physical intervention accuracy or grasp benefit.
-
-The server regression suite passed 100 tests, with three optional RGB skips,
-in 5.392 seconds; log `output/risk-training-suite-261006.log`. The two new
-attention tests verify CPU output/gradient equivalence and checkpoint keys,
-and prove the full-width dropout/backward path bypasses SDPA. Shell syntax
-and launcher help checks also passed.
-
-The actual launcher then passed three concurrent one-epoch jobs:
-
-```bash
-bash scripts/train_risk_multiseed.sh 0,2,3 \
-  output/dataset-261006-risk/manifest.json \
-  output/risk-epoch-check-261006-config.json
-```
-
-Artifacts are under `output/risk-multiseed-261006-023521`, with the outer
-log `output/risk-multiseed-check-261006.log`. Seeds 0/1/2 on physical GPUs
-0/2/3 each completed 378 updates, full validation and checkpoint writes;
-their best validation losses were 0.1403171413, 0.1588276450 and
-0.1544478830. All three reports and `summary.json` passed. This proves the
-separate-container GPU mapping and launcher lifecycle; it is not one-model
-DDP, a 30-epoch experiment, or evidence of physical grasp improvement.
-
-## Background workflow preparation — 2026-10-06
-
-Read-only `pair_manifest` validation found 69 successful parent candidates,
-207 planned pairs (126 train, 39 val, 42 test), and no missing lower/lift saved
-references. The plan SHA-256 was
-`87ba1caa07cd46e810f0e3dd71cff69dbea8504bbf8b4ce9bdc9077f5dc09fe8`.
-This validation ran no physics and generated no new ARDY motion.
-
-The background workflow tests cover incomplete collection rejection,
-continuing from a completed collection containing rejected pairs, rejecting
-missing Risk/Residual supervision, excluding busy GPUs even when memory is
-zero, stage ordering, use of all idle GPUs, and host/container path mapping.
-All five passed locally. A real single-card launcher check on physical GPU 7
-also passed a full epoch and checkpoint writing with the explicit fresh
-output directory `output/pipeline-launch-check-261006`; best validation loss
-was 0.1403171413. Its outer log is
-`output/pipeline-launch-check-261006.log`. These checks do not establish that
-the forthcoming 207 candidates produce Residual-ready data.
-
-The five workflow tests also passed on the server in 0.006 seconds. The code
-was pushed as `0c2e00a` before starting the authorized background run at
-`output/teacher-risk-261006`. A post-disconnect process check verified parent
-PID/SID 1390625 with PPID 1 and the intended script/run arguments. The
-initial real collection report had seven of 207 candidates completed, two
-`recovery_verified` results and one rejected execution. The run state was
-healthy at the teacher stage. These partial counts are not a final success
-rate or proof of train/val correction coverage.
-
-The run's atomic `state.json`, `pairs/report.json` and `teacher.log` supplied
-the initial monitoring check. The existing heartbeat was updated and its
-saved configuration checked: ACTIVE, every 15 minutes, exact run validation,
-unique-event Outlook deduplication, failure detection and terminal cleanup.
-The connected Outlook profile confirmed `wentao_gu@outlook.com`. No completion
-email was due at setup because the run's stage-event list was still empty.
-
-## Completed teacher-to-Risk workflow — 2026-10-06
-
-The detached `output/teacher-risk-261006` workflow finished at
-2026-10-05 21:26:36 UTC. Its terminal `state.json` has the expected
-`dl-teacher-risk-pipeline-v1` schema/run identity and four completion events.
-The final Risk event is `DL-PIPELINE-teacher-risk-261006-4`.
-All 207 controlled teacher candidates were processed, with 48
-`recovery_verified`, 68 failed/rejected and zero pending. The collector's
-exit code 1 represents recorded individual rejections; its completed report
-allowed conversion. These counts do not measure recovery from general
-naturally failed states.
-
-Conversion and the separate Risk AND Residual availability audit passed:
-
-| Split | Windows | Risk positive | Risk negative | Censored | Correction | Stable identity |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Train | 53,485 | 50,119 | 3,296 | 70 | 28 | 1,686 |
-| Validation | 17,268 | 16,067 | 1,182 | 19 | 7 | 624 |
-| Test | 20,222 | 18,983 | 1,221 | 18 | 13 | 723 |
-
-Conversion skipped no source parents. Split ownership was fixed before
-window extraction and inherited by each teacher/perturbation branch.
-The converter's contributing parent-variant counts are 159/52/57; these
-are not counts of independent original episodes. Future-valid fractions
-are 0.99407544/0.99425961/0.99435021. Readiness validates the presence of
-supervision categories, not adequate independent sample size,
-generalization or learned-control performance. In particular, only seven
-validation windows have verified correction targets.
-
-Artifacts are `dataset/{manifest.json,report.json,train.npz,val.npz,test.npz}`,
-`pairs/report.json` and `dataset-audit.json` under this run.
-Manifest SHA-256:
-`2d07e2997be21366172a21e48c110e691f7035af7cd7e385bbf8fc79b78f0cd6`.
-Training config `configs/learning/p.json` SHA-256:
-`f30075eba4c91236cd21d4b0de867a887f163eeafcaca61debca5119f05382a2`.
-The exploratory tracking thresholds stayed `.06 .06 .1 .1`.
-
-The launch-time availability check selected physical GPUs 2 and 3 while
-the other cards had active workloads. Two independent models completed
-the existing 30-epoch budget; this run did not use single-model DDP.
-Both reports record MUSA, PyTorch 2.9.1, NumPy 1.26.4, 3,227,812 parameters,
-batch size 64, 25,080 updates and `synthetic_inputs: false`.
-
-| Seed | Physical GPU | Epochs | Best validation loss | Best epoch | Training-loop seconds |
+| Split | Windows | Source parent entries | Risk positive | Risk negative | Censored | Correction samples | Stable identity samples |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Train | 82,060 | 286 | 24,606 | 56,759 | 695 | 30 | 29,185 |
+| Validation | 29,248 | 99 | 7,688 | 21,299 | 261 | 9 | 13,026 |
+| Test | 29,497 | 97 | 7,924 | 21,323 | 250 | 13 | 13,620 |
+
+Both supervision-availability gates pass. Parent entries include related
+clean/perturbed branches; these are not 482 independent original episodes.
+Correction entries are also not independent recovery trials merely because
+they have distinct branch IDs. Use original-parent/episode-cluster identifiers
+for uncertainty and disclose independent recovery coverage.
+
+The manifest preserves older dense-velocity and current sparse-velocity
+cohorts. The current training-only tracking thresholds are
+`[.14, .15, .10, .13]` rad. The frozen stable-hold tracking-positive guard is
+at most 10% on untouched validation. It measured 690/9,721 (7.10%) on train
+and 378/4,276 (8.84%) on validation. No test data was used to select this
+candidate. Passing this exploratory guard does not prove that every proxy
+label corresponds to a future physical failure.
+
+The controlled teacher verifies matching pre-perturbation state and a clean
+success versus perturbed failure. It is not general natural-failure recovery.
+Unsupported missing-reference replays remain excluded and introduce nonrandom
+censoring. The main correction supervision is still small despite the number
+of overlapping windows.
+
+## Training and selected artifacts
+
+Run root: `risk-quality-retrain-261007f/`.
+
+| Model | Seed | Maximum epochs | Actual epochs | Best epoch | Best validation total loss |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 0 | 2 | 30 | 0.086504668710737 | 3 | 1804.437194 |
-| 1 | 3 | 30 | 0.09981808388707823 | 3 | 1799.262290 |
+| Risk | 0 | 30 | 9 | 4 | 0.2157395087 |
+| Risk | 1 | 30 | 7 | 2 | 0.2307007945 |
+| Residual P, with frozen Risk seed 0 | 0 | 30 | 30 | 11 | 0.0006613362 |
 
-Per-seed evidence is `risk/seed-{0,1}/{report.json,metrics.json,best.pt,last.pt}`
-and `risk/seed-{0,1}.log`. Both reports and `risk/summary.json` passed.
-A read-only SHA-256 check of each actual best checkpoint matched its report:
+Risk used independent seeds on physical GPUs 2 and 3, natural sampling and
+validation patience 5. The actual epochs differ from the 30-epoch maximum.
+Residual completed its fixed budget and was supervised by corrections and
+stable identity samples using predicted frozen-Risk tokens. These were
+independent models, not single-model DDP. Offline reports record
+`physics_executed=false`; physical evidence is documented separately below.
 
-- Seed 0:
-  `c6d84c8992e9276f5f767b6d4a2cc9ba7047dad42b89bcd9e0842f7fdc781f7b`.
-- Seed 1:
-  `1cedad359bce3bf4571808d0202f7f8d436c3863eb3be5e94b9cf6db82daf68a`.
+Risk seed 0 was selected by minimum best validation total loss. Its raw
+validation max-F1 gate is threshold **0.31**, validation F1 **0.8802951**.
+Tie-breaking favors fewer activations, then higher threshold. The threshold
+was frozen before test; no temperature transform was fitted for production.
 
-The minima were independently located in each 30-entry `metrics.json`.
-Later epochs did not improve those validation minima. At epoch 30,
-validation losses were 0.1643692408/0.1633657932. The best checkpoint,
-rather than the last checkpoint, is the validation-selected artifact.
-The class imbalance, correlated windows and small correction coverage
-limit interpretation. No final test inference or gate calibration was
-performed. Training/audit reports record `physics_executed: false`;
-they establish offline supervision/training completion, not P grasp
-success. Residual training and paired physical B0/P evaluation remain
-outstanding. The source/threshold/split/checkpoint files were not changed
-during this completion check.
+| Artifact | Server path under `output/` | SHA-256 |
+| --- | --- | --- |
+| Dataset manifest | `risk-quality-final-261007f/dataset/manifest.json` | `9b004bad3f425e69ca3d91aebc50e668cfa7424965f342d86285182ee51d27a6` |
+| Selected Risk | `risk-quality-retrain-261007f/risk/seed-0/best.pt` | `07dc7498b24cc28570fe00cd5e57292fc8e46607215e243ce8d357b403395512` |
+| Residual P | `risk-quality-retrain-261007f/residual/best.pt` | `0ada52f5686a62ecdd32b511d29ac346d401c10a7f6297292f5554f4500ba095` |
+| Runtime gate | `risk-quality-retrain-261007f/eval-val/gate.json` | `8e6cf670449ca1c24d6c47d55a4d2a1ef657eb57e55377b213bb746a441ebcd5` |
 
-The repository was clean at `b778f44` before this documentation update.
-Only measured completion facts and current handoff status were changed.
-Documentation consistency and `git diff --check` were checked before
-commit; model or physics reruns were unnecessary for this documentation
-update. Outputs and checkpoints remain outside Git.
+`final-label-gate.json` is a dataset/label audit certificate, not the runtime
+intervention gate. Keep these artifacts matched; loader/session provenance
+checks reject changed checkpoint, normalizer, dataset or gate evidence.
 
+## Offline Risk test metrics
 
-## Risk quality interfaces and label diagnosis — 2026-10-06
+Source: `risk-quality-retrain-261007f/eval-test/report.json`.
+The frozen gate evaluates 29,247 observed windows and masks 250 censored ones.
 
-The full existing-container CPU regression command
-`python -m unittest discover -s tests -v` passed 133 tests with 3 skips
-in 6.164 seconds. The log is
-`output/risk-quality-261006-checks/tests.log`. It includes real compiled
-MuJoCo live/replay feature parity, nonlinear nominal zero-provider equality
-(including terminal hold and underrun), gate provenance rejection, direct
-recovery/censoring preservation and real tiny training-loop early stopping.
-These are interface/training tests, not physical G1 grasp results.
+| Metric | All observed intervention windows | Current-proxy-negative future-onset subset |
+| --- | ---: | ---: |
+| Available windows | 29,247 | 22,479 |
+| Positive windows | 7,924 | 1,156 |
+| Recall | 0.8727 | 0.7413 |
+| False-positive rate | 0.0520 | 0.0520 |
+| Balanced accuracy | 0.9103 | 0.8447 |
+| F1 | 0.8672 | 0.5490 |
+| Average precision | 0.9510 | 0.4990 |
+| ROC AUC | 0.9759 | 0.9506 |
 
-Train/validation continuous-physics diagnosis checks every recorded 5 ms
-sample over the 280 ms label interval. Stable hold requires a successful
-source, full future, block clearance at least 5 cm, opposing finger forces
-above 0.01 N and no balance violation. There are 6,712/2,234 accepted
-train/validation windows from 35/12 original episodes. All currently carry
-a tracking-triggered intervention label. Normal stand arm medians are
-0.07343/0.07575 rad against the 0.06/0.06 defaults. No joint/unit/time bug
-was confirmed. The report is
-`output/risk-quality-261006-checks/label-diagnosis.json`.
+Of all positives, 6,755 already have a current tracking/contact/balance proxy
+violation, 1,156 are future-only proxy positives, and 13 are separate direct
+verified-recovery labels. This distinction matters: overall intervention
+metrics mix reactive and future-onset cases. On all observed windows the
+current-proxy reactive diagnostic achieves F1 0.9204, exceeding the learned
+gate's 0.8672. On the future-onset subset that proxy cannot trigger, but proxy
+onset is not proof of future physical task failure. Do not infer overall
+predictive-control superiority from window accuracy or the onset subset.
 
-Stable train per-episode horizon-maximum p95 errors have across-episode
-p95 values 0.1378828, 0.1325193, 0.0506042 and 0.1198446 rad
-(left arm, right arm, torso, lower body). They support an exploratory
-train-fitted calibration rule; validation/task outcomes must check it.
-All 28/7 train/validation verified recovery decisions lose their short
-tracking/contact/balance proxy trigger with arm thresholds at least 0.10.
-Direct verified-recovery supervision must therefore remain intact.
-A tracking threshold alone cannot establish whether correction is useful.
+## Original batch integration
 
-The P-only sparse nominal velocity plus correction derivative repair changes
-the baseline source hash. Old output evidence is preserved, old resume locks
-remain strict, and new teacher runs form a distinct source cohort. Future
-B0/P trials must use this shared current revision and matched requests.
-Validation metrics and bounded teacher pilot outcomes will be recorded when
-measured; no predictive advantage or grasp improvement is claimed here.
+Artifact:
+`risk-quality-batch-integration-261008/batch-261008-003745/attempt-00001/`.
+Its report records `physics_executed=true`, `sonic_executed=true` and
+`task_success=true`, with the selected matched model/gate hashes. The episode
+recorded 254 Risk decisions, 13 activations and no history gaps, with nonzero
+bounded arm correction.
 
+This verifies loading, causal runtime control and physical execution through
+`./run.sh batch --ardy`. One successful episode is not a success-rate estimate.
+The shared baseline had no learned-artifact requirement, and P retained the
+same contact, fall, reference and task-success criteria.
 
-### Old checkpoint validation, quality run stage 1
+## Matched B0/P physical evaluation: seeds 61020–61079
 
-`output/risk-quality-261006/old-risk/seed-{0,1}/report.json` contains
-validation-only assessment of both unchanged epoch-3 best checkpoints:
+Artifacts:
 
-| Seed | Raw gate | Recall | False-positive rate | Specificity | Balanced accuracy | Low-risk AP |
-| --- | --- | --- | --- | --- | --- | --- |
-| 0 | 0.18 | 0.992469 | 0.218274 | 0.781726 | 0.887097 | 0.925023 |
-| 1 | 0.31 | 0.990664 | 0.207276 | 0.792724 | 0.891694 | 0.914225 |
-
-The current-proxy-negative future-onset subset has 2,216 available windows
-(1,034 positive, 1,182 negative) from 40 prompt/scene episode clusters.
-Seed 0/1 recall is 0.932302/0.893617 and balanced accuracy
-0.857014/0.843171 at the same frozen raw gates. A current-proxy-only
-reactive comparator cannot detect those later onsets (recall 0, specificity 1).
-This isolates predictive proxy evidence; it does not validate intervention
-usefulness or grasp improvement. Overall old-label positives are already
-current-proxy-positive in 15,031/16,067 windows, so overall accuracy/F1
-alone cannot establish advance prediction. The test split was not evaluated.
-
-### Quality runner repair and bounded continuation
-
-The original first-stage parent collector completed all five train-a physical
-trials at seeds 12000–12004: two successes (12002/12003), two timeouts and
-one late grasp loss. Its batch exit code 1 represents evaluated task failures.
-The host runner incorrectly treated this as an execution failure and stopped.
-The reports remain immutable at
-`output/risk-quality-261006/parents/train-a/batch-261006-151846`.
-
-The repaired runner accepts exit codes 0/1 only with five complete, matching
-physics/SONIC reports and verified episode hashes. Its explicit `--resume`
-checks dead recorded processes, all pinned inputs, saved validation predictions,
-fixed physical configuration and phase prompts before modifying state. A
-changed runner is permitted only when the old hash matches its recorded Git
-blob and the new reviewed source is committed. It backs up previous state and
-an artifact-hash receipt, then reuses old validation and train-a. Partial later
-stages and changes to frozen baseline/data inputs are rejected.
-
-The server full-container CPU suite passed **154 tests with 3 optional RGB
-skips in 6.289 seconds**. Log:
-`output/risk-quality-261006-resume-checks/tests.log`. The nine runner regression
-tests cover safe reuse without duplicate execution, actual-report/config/hash
-mutation rejection, Git source upgrade and active-PID rejection. Eight
-continuation tests cover pair evidence, split/cohort preservation, exclusive
-first-run consumption, training selection and validation stop gates. Six
-calibration tests cover the train-only rule, sufficient independent episodes,
-input provenance and output overwrite rejection. Actual saved server evidence
-also passed `QualityPipeline.preflight_existing` and `checked_batch`.
-
-The frozen server calibration artifact is
-`output/risk-quality-261006-checks/label-calibration.json` (SHA-256
-`b6f2be232e9c6d0850a0ed6035fd36e6a8699cd11de6962f5645528b61fbe1bf`).
-It derives `.14 .14 .10 .12` from the existing continuous train diagnosis,
-uses no test evidence and changes no dataset labels. The bounded continuation
-requires new independent train/validation recoveries, retained prior direct
-corrections and a validation stable-hold tracking-positive fraction at most
-10% before fresh Risk training. These checks establish executable tooling;
-they are not new recovery, Residual or P grasp-performance results.
-
-### Kimodo generator integration verification — 2026-10-06
-
-The Kimodo work was applied in the canonical worker workspace
-`/home/group3/dl` on `group3@10.123.0.39`; the existing uncommitted
-Risk/Residual pilot files were preserved. The default ARDY/B0 path remains the
-default, while `batch --kimodo` and `manual --kimodo` select the lazy Kimodo
-generator and continue through the shared task sequencer, grounding, SONIC,
-reference checks, finger controller, physics and evaluator.
-
-The following checks passed on the worker with `/usr/bin/python3`:
-
-- `py_compile` passed for the Kimodo adapter, shared execution/session code,
-  CLI, fetcher and packaging entry points.
-- `python3 -m unittest tests.test_kimodo tests.test_sessions
-  tests.test_reference_timing tests.test_policy_runtime tests.test_baseline_bringup`
-  passed: **48 tests**.
-- `python3 scripts/fetch_kimodo.py --offline --only source` verified the
-  transferred source checkout at commit
-  `f12db15b33a3cfb4d4c1288d3b54ee7743a4255c`.
-- `python3 scripts/run.py batch --kimodo --plan-only --batch 1 ...` completed
-  successfully and produced a KIMODO plan without loading an upstream model.
-
-The final adapter hash is
-`6345d0af103e76ac37c5e9fcd8602272457d3733938e6d43011af044631d13a1`; the
-Kimodo lock hash is
-`0967bc7ae7a8fbe75d75e1521ac9976ce1eeb8ac564ed027337c6aae75201f8b`.
-The transferred source is about 122 MiB and is not a model checkpoint.
-
-The pinned `checkpoints/kimodo/` directory and its manifest are still absent.
-Consequently, `python3 scripts/fetch_kimodo.py --offline --only all` stops at
-checkpoint verification and reports the connected-machine download plus rsync
-procedure. No Kimodo checkpoint load, text-to-motion inference, SONIC tracking,
-MUSA compatibility check, contact grasp/lift trial or grasp-success result is
-claimed by this entry. Those checks remain pending until the pinned checkpoint
-is copied into the worker and verified offline.
-
-### Kimodo generator follow-up — checkpoint and MUSA execution evidence — 2026-10-06
-
-The previous Kimodo entry records the setup-only state at that time. It is
-superseded for asset and inference status by this follow-up; the earlier entry
-is retained as a historical record rather than silently rewritten. The canonical
-worker now contains the complete pinned Kimodo source and checkpoint:
-
-- source commit: `f12db15b33a3cfb4d4c1288d3b54ee7743a4255c`;
-- checkpoint: `nvidia/Kimodo-G1-RP-v1` at revision
-  `3020ad8c419c244e0429d360163730c63c4ed011`;
-- checkpoint manifest SHA-256:
-  `05bb01c2be7b94b3b3dcfdf8a7e43998b59e314cbef28f8c2b5335de3b48affa`;
-- `model.safetensors` size: 1,134,168,268 bytes;
-- current `baseline/kimodo.py` SHA-256:
-  `aff8129311d068f991f0bce91871233f99f9de326c0248a450f6cabde15d8e29`.
-
-`python3 scripts/fetch_kimodo.py --offline --only all` passed on the worker
-without network access. The existing `./run.sh check` also passed the pinned
-B0 assets, text compatibility and MUSA linear/layer-norm/attention primitive
-checks under torch/torch_musa 2.9.1. The regression command
-
-```bash
-./run.sh shell -lc 'python -m unittest tests.test_kimodo tests.test_sessions \
-  tests.test_reference_timing tests.test_policy_runtime tests.test_baseline_bringup -v'
+```text
+risk-quality-policy-paired3x20-261007-seeds61020-61079/manifest.json
+risk-quality-policy-paired3x20-261007-seeds61020-61079/audit.json
+risk-quality-policy-paired3x20-261007-seeds61020-61079/paired-results.json
 ```
 
-passed **49 tests** after adding coverage for the MUSA-safe Kimodo constraint
-index path. `baseline/ardy.py` has no diff; the default command still selects
-ARDY/B0, and the tests cover lazy Kimodo selection. A post-change default ARDY
-model-load and 2-second standing execution-only run also completed at
-`output/ardy-regression-final/batch-261007-050119/summary.md`. A default
-ARDY text-to-motion execution-only run also completed at
-`output/ardy-motion-regression-final/batch-261007-050858/summary.md`.
+Three fixed seed groups each contain 20 matched trials. Each pair shares
+request, scene, baseline parameters, physics, SONIC and evaluator. Risk,
+Residual and the validation gate remained frozen. All six method batches
+completed 20 valid physical trials, with zero invalid executions. The audit
+is `status=pass`, with no errors.
 
-The following actual worker runs are intentionally separated by evidence type:
+| Seeds | B0 successes | P successes |
+| --- | ---: | ---: |
+| 61020–61039 | 5/20 (25%) | 7/20 (35%) |
+| 61040–61059 | 10/20 (50%) | 5/20 (25%) |
+| 61060–61079 | 8/20 (40%) | 11/20 (55%) |
+| **All 60 pairs** | **23/60 (38.33%)** | **23/60 (38.33%)** |
 
-1. `output/kimodo-execution-fix4/batch-261007-042522/summary.md` loaded
-   Kimodo, SONIC and the shared simulator, then completed a 2-second
-   execution-only standing run. It had no task prompt, so it is not text-motion
-   or grasp evidence.
-2. `output/kimodo-motion-fix5/batch-261007-042830/summary.md` completed a
-   text-to-motion Kimodo generation, converted the pinned 30 Hz/36-column qpos
-   to the shared named-joint reference, resampled it to 50 Hz and executed it
-   through SONIC/MuJoCo. The attempt completed as execution-only; it is not a
-   grasp success. A current-source rerun is also recorded at
-   `output/kimodo-motion-final/batch-261007-052045/summary.md` and completed
-   with the same execution-only status.
-3. `output/kimodo-grasp-fix3/batch-261007-041403/attempt-00001/report.json`
-   is the final full grasp trial after the adapter device fixes. It generated
-   `kimodo/reach`, `kimodo/lower`, `kimodo/lower_replan_01` and
-   `kimodo/lower_replan_02` references, including `reference.npz` and
-   `reference.packet` for each phase. The trial executed physics to 13.84 s
-   and stopped with `grasp_alignment_missed` before closing; no grasp success
-   is claimed. The report records one buffer underrun and 42 target-limit
-   clamps, which remain part of the failure diagnosis.
+Each aggregate Wilson 95% interval is [27.09%, 50.98%]. Pair outcomes are
+seven P-only successes, seven B0-only successes, 16 both-success and 30
+both-failure. P minus B0 is 0 percentage points; its paired bootstrap 95%
+interval is [-11.67, +11.67] percentage points. Exact two-sided McNemar p=1.0.
+Retaining only the first or third batch would misrepresent the pooled result.
 
-The first full grasp attempts exposed and then fixed two adapter-only issues: a
-MUSA/CPU constraint-index mismatch and a missing bound `torch` reference in the
-custom torso-rotation constraint. Those fixes are covered by the current unit
-tests and did not modify the pinned Kimodo checkout or `baseline/ardy.py`. The
-remaining negative result is a model/task execution outcome, not hidden or
-converted to a success. Contact-grasp success, paired Kimodo evaluation and
-comparison against B0 remain unverified.
+| Failure reason | B0 | P |
+| --- | ---: | ---: |
+| `grasp_not_acquired` | 12 | 12 |
+| `timeout` | 15 | 15 |
+| `grasp_lost_after_success` | 9 | 7 |
+| `prohibited_robot_table_contact` | 0 | 2 |
+| `block_floor_contact` | 1 | 1 |
 
-Packaging was also checked with fresh archives:
-`output/b0-source-final.tar.gz` contains the declared 62 B0 source files and
-excludes `baseline/kimodo.py` and `configs/kimodo.lock.json`; the explicit
-`output/kimodo-source-final.tar.gz` contains the corresponding 66 Kimodo-scope
-source files, including those two Kimodo artifacts. Neither archive contains
-weights, upstream checkouts or run artifacts.
+P made 12,276 Risk decisions with 4,517 Residual activations (36.80%) and no
+history gaps across these trials. Means of the per-trial p95 latency were
+4.174 ms for Risk, 3.464 ms for Residual and 9.170 ms for the controller.
+These include the report's gate-dependent sampling and are not one pooled
+latency percentile. They do not establish real-time motion-generation control.
 
-### Kimodo final-source contact-grasp verification — 2026-10-07
+This is a single learned-checkpoint exploratory repeat with changed scene
+seeds. It does not complete the proposal's multiple trained seeds, perturbation
+conditions, B1/I2 controls or full ablation budget. Analyze the discordant pairs
+and freeze a targeted validation change before a new independent experiment;
+do not select seeds after inspecting their outcomes.
 
-All timestamps use Asia/Shanghai. Work was performed in the canonical worker
-`group3@10.123.0.39:/home/group3/dl`, not the older local checkout. Assets were
-downloaded on a connected machine, transferred with rsync and verified offline:
+## Incomplete additional repeat
 
-- Source: `f12db15b33a3cfb4d4c1288d3b54ee7743a4255c`.
-- Checkpoint: `nvidia/Kimodo-G1-RP-v1`, revision
-  `3020ad8c419c244e0429d360163730c63c4ed011`.
-- Manifest SHA-256:
-  `05bb01c2be7b94b3b3dcfdf8a7e43998b59e314cbef28f8c2b5335de3b48affa`.
-- Weight SHA-256:
-  `e18c1de73e2ce17a107b06d85155fbbc5debe68eb35455aa5b033e6ddbe056a5`.
+The separate `risk-quality-policy-paired4x20-261008-seeds61100-61159-rerun1/`
+run planned 60 requests per method with a 5 s hold phase. It did not finish
+all branches or produce a passing paired audit. Its six batch summaries record
+54 completed B0 attempts (53 valid executions, 19 successes) and 47 completed P
+attempts (45 valid executions, 18 successes). There are 45 request-matched pairs
+with valid physical execution on both sides: 9 both succeed, 19 both fail,
+9 P-only successes and 8 B0-only successes.
 
-Frozen upstream source, weights, ARDY assets and the vendor stack are unchanged.
+Three executions were invalid because generated references violated shared
+joint limits during `lower`: B0 and P at seed 61113 and P at seed 61132. Preserve
+those reports and the uncompleted requests. Do not count them as completed valid
+trials, choose only favorable batches, or pool this partial, differently
+configured run with the fully audited 61020–61079 cohort. Its partial evidence
+is not a replacement for a predeclared completed comparison.
 
-#### Boundary fixes and calibrated configuration
 
-Measured history is permuted by explicit names from IsaacLab order into the
-converter XML order before CPU constraint/heading conversion. Generated qpos
-uses the reverse named mapping into SONIC order. The declared standing anchor,
-not the latest moving pose, defines wrist-rotation deltas and canonicalization.
-Shared 25 Hz constraint timestamps map to Kimodo's 30 Hz grid; references are
-resampled to 50 Hz and velocities recomputed. Per-phase artifacts retain the
-actual constraints, measured history, raw/generated qpos, names, references,
-packets and hashes. MUSA index/cropping and unused posed-joint decode issues
-are handled only at the adapter boundary; qpos still comes from generated
-rotations and the pinned checkout is unchanged.
+## Kimodo physical evidence
 
-Kimodo has no native ARDY-style history conditioning. Reports explicitly record
-`history_conditioning=false`; history supplies current-state anchors and the
-shared measured-pose transition, not future executed states. Batch/manual,
-prompts, grounding, root/wrist goals, SONIC, fingers, physics, checks, logs,
-rendering and evaluation are shared.
+Artifact: `kimodo-final-batch20-261007/batch-261007-104935/summary.json`.
+The pinned final-source/raw-output batch completed 20 attempts at seeds 0–19
+and retained **11/20 successes (55%; Wilson 95% [34.21%, 74.18%])**. Failures
+were five alignment misses, one acquisition failure, two timeouts and one
+post-threshold loss. It used the tuned wrist offset, 100 denoising steps and
+constraint guidance 2, with the shared free-root/dynamic-block/SONIC evaluator.
 
-Successful K0 uses 100 denoising steps, guidance `[2,2]`, raw nominal output,
-focused shared phase prompts, direct-start grasp and wrist-target offset
-`[0.125,0.035,0.080]` metres. This exploratory calibration is the new K0 grasp
-default and is saved in the plan. ARDY retains the measured-site default;
-explicit overrides and resumed plans keep their original settings. Grounding
-equations, acquisition gates, contact solver, free base, dynamic block,
-failure stops and success criteria were not changed or relaxed.
+The tuning and final batches reuse the same seeds; they are not 40 independent
+trials. Static-FK projection pilots failed and are not part of this raw-output
+result. This calibrated K0 batch has different seeds/selection context from
+B0/P and does not establish superiority to either. A fair generator comparison
+requires predeclared common instructions, conditions and seeds.
 
-Raw output is now the default; `--kimodo-no-projection` stays compatible.
-`--kimodo-project-constraints` explicitly enables experimental static-FK
-projection version 2: seven right-arm hinges only, physical limits, maximum
-0.7-radian offsets, declared hand-center target and soft wrist orientation.
-Other coordinates are preserved. It never steps physics, reads future
-execution or uses a teacher/learned residual. Its physical pilots failed;
-projection is not grasp-validated and is excluded from successful K0.
+## Regression and remaining evidence
 
-#### Retained tuning evidence
+Run `./run.sh tests` in the supported image for source contracts and RGB/MP4
+checks. Asset/operator checks, frozen model probes and shared physical
+execution remain distinct acceptance gates. Environment-dependent skips must
+be reported rather than treated as passed model runs. The cleanup's check
+results are stored with its output receipt.
 
-All folders below are under `output/`; all failures remain in their denominators.
-Each complete batch uses seeds 0--19.
-
-| Folder / session | Successes / completed | Failures |
-|---|---:|---|
-| `kimodo-batch20-261007/batch-261007-071905` | 0/20 | 10 alignment misses, 5 lower errors, 5 prohibited robot-table contacts. |
-| `kimodo-order-fix-batch20-261007/batch-261007-090900` | 0/20 | 20 alignment misses. |
-| `kimodo-offset4-raw-batch20-261007/batch-261007-102916` | 0/20 | 19 alignment misses, 1 timeout. |
-| `kimodo-offset8-raw-batch20-261007/batch-261007-103337` | 11/20 | 5 alignment misses, 1 acquisition failure, 2 timeouts, 1 post-threshold loss. |
-| `kimodo-final-batch20-261007/batch-261007-104935` | **11/20** | Same failure counts; fresh final source and defaults. |
-
-The one-attempt diagnostics also remain saved, all with alignment failure:
-named-order `batch-261007-090336`, guidance 1 `batch-261007-091949`, projection
-`batch-261007-095001`/`batch-261007-095804`, projection plus four replans
-`batch-261007-100427`, raw offsets .04/.06
-`batch-261007-100833`/`batch-261007-101338`, projected .04
-`batch-261007-102159`, and version-2 hand-center projection
-`batch-261007-103715`. Their complete `kimodo-*-261007` folders retain plans,
-reports and trajectories. These are tuning diagnostics, not additional
-independent benchmark conditions. Repeated seeded batches must not be pooled.
-
-#### Final-source 20-attempt physical simulation
-
-No explicit wrist offset or projection flag is required:
-
-```bash
-./run.sh batch --kimodo --grasp --batch 20 --seed 0 \
-  --device musa:0 --text-device musa:0 \
-  --output-root output/kimodo-final-batch20-261007
-```
-
-`kimodo-final-batch20-261007/batch-261007-104935/summary.json` records
-`status=complete`, planned/completed/evaluated 20, pending 0, successes 11 and
-failures 9. Success is **55%, episode-level Wilson 95% [34.21%,74.18%]**.
-The required minimum 4/20 is satisfied. Success seeds: 1,3,7,8,9,10,11,14,16,18,19.
-Failures: 0,4,5,6,15 alignment; 2 acquisition; 12,13 timeout; 17 post-threshold
-loss. Neither timeout nor loss after crossing the hold threshold is a success.
-
-The independent read-only `output/kimodo-debug-261007/final-audit.json` verifies
-all terminal seeds, final worktree source hashes against the immutable plan,
-and every successful report: physics/SONIC executed, free base, no elastic
-support, no teacher/learned correction/user intervention, opposing finger
-contact, at least 5 cm lowest-point clearance and 2 s continuous hold, final
-retention, no prohibited contact and no more than 30 simulated seconds.
-All 69 phase-generation reports passed using raw output, 100 steps and `[2,2]`.
-
-| Attempt / seed | Maximum clearance | Continuous hold | Simulated duration | Retained |
-|---|---:|---:|---:|---|
-| 2 / 1 | 0.18337 m | 8.315 s | 21.24 s | Yes |
-| 4 / 3 | 0.17349 m | 8.045 s | 23.48 s | Yes |
-
-The 20 trials contain 403.00 simulated seconds and 601.68 seconds summed
-attempt wall time, excluding startup/idle overhead. Median episode tracking
-joint RMSE is 0.09605 rad (range 0.07524--0.11816). Median command-to-first-
-reference wall latency is 7.318 s (7.268--25.842); median generation latency
-across 69 clips is 6.020 s (5.464--20.407). Median episode SONIC p50/p95
-latencies are 3.056/3.572 ms. One buffer underrun/hold is logged per attempt
-and there are 21 control deadline misses. These are retained under unchanged
-shared hold behavior. A 50 Hz reference grid is not real-time inference evidence.
-
-Plan digest: `a79ba434697025f1e15ebdfc6bc10b077088da96108495b8e46ab2da4b23b42c`.
-`plan.json` file SHA-256:
-`5fe517a19db4742b39b2e9f89d2432b6afc5b456b26a7f43798c5dea158a47ab`.
-
-| Final source file | SHA-256 |
-|---|---|
-| `baseline/kimodo.py` | `70a479132133e71c047d0770545999f64c7b1954192308ad3f772b29ecdbb64c` |
-| `baseline/kimodo_projection.py` | `3b45940be3ae5c38a0ff8372d6ff65797eb046c63dae0e5a568c65e085626ff2` |
-| `baseline/execution.py` | `3ff7635cf505c4ffbf809bb69509d892017f0043ab556b7e58589329a12c990b` |
-| `baseline/session.py` | `f61675ed7b17b4064557810817275fe3bb1f00eecff7544f35edf6193fafa5f9` |
-| `scripts/run.py` | `274d5d81b8e14e5b1fa38c0694f6ec87839d28669a89a3190524b4b98372cf2f` |
-| `configs/kimodo.lock.json` | `0967bc7ae7a8fbe75d75e1521ac9976ce1eeb8ac564ed027337c6aae75201f8b` |
-
-#### Regression and test evidence
-
-Vendor torch/torch_musa 2.9.1 was preserved. Runtime versions: MuJoCo 3.2.7,
-NumPy 1.26.4, SciPy 1.15.3, ONNX Runtime 1.23.2 and Transformers 5.8.1.
-No CUDA/TensorRT substitution or dependency upgrade was used.
-
-```bash
-./run.sh tests
-./run.sh smoke --out output/kimodo-final-smoke-261007
-./run.sh check
-./run.sh shell -c 'python scripts/fetch_kimodo.py --offline'
-```
-
-**184 tests passed**, including enabled RGB/MP4 tests. Fresh smoke passed
-synthetic reference/packet conversion only. Baseline pinned assets and MUSA
-operators passed; separate offline Kimodo source/checkpoint verification passed.
-Logs: `output/kimodo-debug-261007/final-full-tests.log`, `final-smoke.log`,
-`final-check.log`, `final-offline.log`. These checks alone are not grasp evidence.
-
-A clean snapshot of the exact staged Git index, without unrelated uncommitted
-Risk reviewer/continuation changes, also passed **173 tests** with RGB/MP4
-checks enabled (7.343 s). The worker's 184-test suite includes 11 additional
-unrelated working-copy tests. Snapshot and log:
-`output/kimodo-final-staged-source-261007/` and
-`output/kimodo-debug-261007/final-staged-tests.log`. All staged baseline/run
-source bytes match the final 20-trial source hashes; only documentation
-was updated after the physical batch.
-
-The unchanged batch CLI returns exit 1 when any attempt fails or remains
-pending, even if the batch is terminal and exceeds the requested success-rate
-threshold. Here `summary.json` is complete with 11 successes and 9 failures;
-exit 1 is expected and does not mean a model/runtime exception.
-
-```bash
-./run.sh batch --device musa:2 --text-device musa:2 \
-  --prompt "Stand still and slowly raise the right arm." --duration 2 \
-  --output-root output/ardy-kimodo-final-motion-261007
-./run.sh batch --grasp --batch 1 --seed 0 \
-  --device musa:2 --text-device musa:2 \
-  --output-root output/ardy-kimodo-final-grasp-261007
-```
-
-Default ARDY `batch-261007-105108` passed actual generation/SONIC/free-base
-execution, 229 control frames and 4.58 simulated seconds including startup;
-it has no task evaluator. ARDY grasp `batch-261007-105409` completed 1,500
-frames and 30 seconds without runtime error but had **0/1 task success**:
-timeout, 0.00291 m maximum clearance and no qualifying hold. This establishes
-runtime compatibility, not a preserved success-rate estimate. ARDY source,
-shared grounding, fingers, controller, physics and evaluator have no diff.
-Selector tests actually load the default ARDY stub with Kimodo import forbidden;
-other tests verify B0 defaults, explicit calibration overrides and saved resumes.
-
-#### Offline replay videos
-
-```bash
-./run.sh render --run output/kimodo-final-batch20-261007/batch-261007-104935 \
-  --attempts 1 2 4 --camera third_person --camera wrist_camera \
-  --width 480 --height 360 --fps 10
-```
-
-Rendering completed **3/3, zero failures**, with both cameras and MP4 output:
-attempt 1 is an alignment failure (139 frames); attempts 2 and 4 are successes
-(213 and 235 frames). Each artifact is in `attempt-XXXXX/vision/`, including
-`images.npz`, `video.mp4`, encoder log and hashed replay report. The aggregate
-report is `render-261007-110023-642823.json`. Reports confirm
-`physics_reexecuted=false`; replay is not a new physical trial. Source
-states/model hashes are retained and the original outcome reports are unchanged.
-
-#### Source packages and repository audit
-
-Fresh `output/kimodo-final-b0-source-261007.tar.gz` contains 62 declared B0
-source files and no Kimodo files. Its SHA-256 is
-`dba75b605abad2cd075c2354e8363ed33457ebcc514a350376d9662e6e0582d6`.
-The explicit `--scope kimodo` archive
-`output/kimodo-final-k0-source-261007.tar.gz` contains 68 source files,
-including both Kimodo modules, lock, fetcher and both Kimodo test modules;
-SHA-256 `79064d9caf220ab8a4bbc9e1009caf071d19ccaa6f07d3725faf9220db8b4736`.
-All archive content hashes match their manifests. Neither archive contains
-Risk/Residual packages, weights, environments, upstream checkouts, rollout
-artifacts or credentials. The default B0 archive scope is not expanded.
-The read-only check is `output/kimodo-debug-261007/final-package-audit.json`.
-These archives snapshot the current source/documents, including existing
-uncommitted shared-document edits; they do not assert Git-commit identity.
-
-The final source/document CJK audit found no matches, and `git diff --check`
-passed. Unrelated Risk continuation/reviewer/learning-document files were
-left intact and excluded from the Kimodo commit. No weights, outputs,
-credentials or environments are included in the staged source changes.
-
-#### Interpretation limits
-
-These autonomous simulation trials use no human corrections. They are tuning
-plus repeated-seed final-source verification, not held-out or paired B0/P
-evaluation. The two 11/20 batches are not 40 independent trials. No paired
-advantage, native Kimodo history conditioning, real-time generation,
-walking/grasp or GUI validation is established. Projection has no physical
-success. Core B0/P research remains separate; its unfinished experiments
-are not replaced by K0. Outputs, weights and credentials remain outside Git.
+Remaining research/deliverables include the proposal's controls and ablations,
+a fair held-out ARDY/Kimodo comparison, representative success/failure videos
+for each submission method, Archon-session evidence and the final report/demo.
+Current results do not establish P task improvement, walking grasp,
+real-robot transfer or GR00T integration.

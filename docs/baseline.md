@@ -1,202 +1,139 @@
-# Frozen Baseline
+# Frozen Models and Shared Integration
 
-Use the [command guide](commands.md) as the single source for executable project
-commands. It covers setup, asset downloads, checks, ARDY generation, SONIC
-execution, state recording, rendering, GUI sessions and packaging through
-`./run.sh` from the S4000 host. This document describes the implementation and
-its boundaries; it is not a second command list.
+[Commands](commands.md) contains executable workflows. This page defines the
+asset and reference contracts shared by ARDY, Kimodo and learned P control.
 
-## Scope and status
+## Supported runtime
 
-B0 combines the pinned `ARDY-G1-RP-25FPS-Horizon8` generator, frozen SONIC
-ONNX policy and a free-base G1 MuJoCo scene. The verified executor supports
-standing and arm-motion bring-up. The [B0 grasp collector](grasp.md) adds a
-pilot table/block scene, GT grounding, a default initial position before the
-table, an optional `--walk` root-path approach and settling checks, right-hand
-phases, spatial constraints, fingers, collision stops and episode statistics.
-Manipulation-only contact grasp/lift has pilot evidence; complete walk-and-grasp
-success and calibrated evaluation settings remain unverified.
-Risk/Residual models and their training pipeline are not implemented yet.
-
-All task data and future demonstrations are simulation-only. Risk/Residual
-learning remains separate from `baseline/`, which must run without learned
-checkpoints or imports. The proposal remains the research source of truth.
-
-## Runtime and assets
-
-The pinned vendor image supplies the matching `torch` and `torch_musa` stack
-for the S4000 driver. The project preserves that pair and installs MuJoCo,
-ARDY/SONIC simulation dependencies and the frozen text stack into the shared
-`.venv-baseline-musa` environment.
-
-Three image targets share the same vendor base:
+The S4000 host uses the vendor's matching `torch` / `torch_musa` stack and the
+repository-local `.venv-baseline-musa` environment. The launcher enters the
+container with that environment on `PATH`. Preserve the vendor pair; CUDA
+wheels, TensorRT availability or a passing CPU operator test do not establish
+MUSA model compatibility.
 
 | Image | Purpose |
 | --- | --- |
-| `dl-musa:latest` | Control and state recording; no offscreen RGB backend |
-| `dl-musa-render:latest` | Headless OSMesa RGB and MP4 rendering |
-| `dl-musa-gui:latest` | Virtual GLX display, viewer and SSH-tunneled VNC |
+| `dl-musa:latest` | Control and state recording |
+| `dl-musa-render:latest` | Default headless OSMesa RGB and MP4 rendering |
+| `dl-musa-gui:latest` | Virtual GLX viewer and tunneled VNC |
 
-The `render` target extracts OSMesa libraries into a separate directory rather
-than replacing vendor graphics libraries. The GUI target similarly isolates
-software GLX. The launcher uses private IPC by default, with configurable
-16 GiB shared memory, so separate containers do not share OpenMP registration
-state. Images do not contain the local model weights.
+Software graphics libraries are isolated from vendor graphics libraries.
+Containers use private IPC and configurable shared memory. Images contain no
+local model weights. The 8B text backbone uses MUSA bfloat16 by default; a CPU
+float32 load requires about 32 GB for weights before overhead. Device selection
+is explicit. SONIC uses ONNX Runtime's CPU provider in this implementation.
 
-Source revisions and asset identifiers are pinned in
-[`configs/baseline.lock.json`](../configs/baseline.lock.json). Clean upstream
-checkouts live in `third_party/ardy` and `third_party/sonic`. The matching model
-assets live under `checkpoints/baseline/`:
+## Pinned assets
 
-| Directory | Contents |
+`configs/baseline.lock.json` fixes ARDY, SONIC, the Llama backbone and both
+LLM2Vec adapters. `configs/kimodo.lock.json` separately fixes Kimodo.
+
+| Location | Contents |
 | --- | --- |
-| `ardy/` | Horizon8 model checkpoint and statistics |
-| `sonic/` | Matching encoder, decoder and observation configuration |
-| `llama_base/` | Full Meta Llama 3 8B Instruct backbone |
-| `text_base/` | LLM2Vec MNTP adapter and tokenizer |
-| `text_adapter/` | LLM2Vec supervised adapter |
+| `third_party/ardy/`, `third_party/sonic/` | Exact upstream source revisions |
+| `third_party/kimodo/` | Separately pinned Kimodo source |
+| `checkpoints/baseline/ardy/` | ARDY Horizon8 checkpoint and statistics |
+| `checkpoints/baseline/sonic/` | Matching SONIC encoder, decoder and observation configuration |
+| `checkpoints/baseline/llama_base/` | Complete Llama 3 8B Instruct backbone |
+| `checkpoints/baseline/text_base/`, `text_adapter/` | Tokenizer and frozen LLM2Vec adapters |
+| `checkpoints/kimodo/` | Kimodo G1 checkpoint and asset manifest |
 
-Per-asset manifests record source provenance and file hashes. Llama access
-requires an authorized Hugging Face account. Generated assets, credentials,
-checkpoints and source checkouts are excluded from Git.
+Asset manifests verify file hashes and original download metadata. Access to
+Llama requires an authorized Hugging Face account. For a host without external
+network access, download pinned assets on a connected machine, transfer the
+complete source and checkpoint directories, and register them offline. Do not
+copy credentials or mark an incomplete cache as verified. See
+[offline setup](commands.md#offline-asset-transfer).
 
-The frozen text model has 8 billion parameters. CPU float32 backbone weights
-need about 32 GB before loading overhead. The supported default uses MUSA and
-bfloat16; device selection is explicit and there is no silent CPU fallback.
-SONIC inference uses ONNX Runtime's CPU provider in this implementation.
+## Generator boundaries
 
-## Model interfaces
+### ARDY (`--ardy`)
 
-ARDY consumes a text embedding, history and optional upstream-format kinematic
-constraints. The local text path loads the backbone and both LLM2Vec adapters
-from verified local assets, preserving pinned ARDY tokenization, prompt
-formatting and pooling. ARDY generates at 25 FPS with Horizon8. Its sampling
-rate is not a wall-clock throughput measurement.
+ARDY-G1-RP-25FPS-Horizon8 consumes a text embedding, measured pose history and
+upstream-format kinematic constraints. The local text encoder preserves the
+pinned tokenization, prompt format, bidirectional Llama behavior and pooling.
+ARDY generates at 25 FPS; this is its motion sampling rate, not measured
+wall-clock throughput.
 
-The adapter maps explicitly named joints into the canonical 29-joint G1 order,
-preserves root quaternion wxyz, resamples to 50 Hz and recomputes velocities.
-The SONIC observation adapter follows the pinned default G1 encoder mode and
-observation configuration. SONIC's 0.9 s configured lookahead is independent
-of any future Risk horizon.
+The service saves actual text, measured history, constraints, generated qpos,
+references and hashes under `ardy/<phase>/`. Shared feedback-driven lower
+replans generate from the latest measured state. No teacher participates in
+evaluation.
 
-The executor checks references against active joint limits, uses the same
-SONIC policy and articulated-finger controller, and keeps the robot root free.
-It logs reference installation, buffer coverage, holds, stops, wall/simulation
-clocks, tracking and model provenance. Buffer underruns hold the terminal
-nominal pose and are recorded. Reference rejection and safety stops are
-failures, not successful task outcomes.
+### Kimodo (`--kimodo`)
 
-At the 50 Hz SONIC clock, each run also writes `nominal_context.csv`. It
-contains the causal executed body state and finger targets, the current task
-phase, and the complete nominal position, velocity, quaternion, and time-offset
-lookahead supplied to SONIC. `sim_time` and `frame_index` align this file with
-`trajectory.csv`; grasp object, wrist, and contact labels remain in the 200 Hz
-`task.csv`. This is a frozen B0 recording interface for later Risk/Residual
-window extraction: it never contains future executed states or teacher outputs
-and adds no learning-package dependency.
+Kimodo-G1-RP-v1 is a distinct frozen motion generator. It uses the shared text
+phases, simulator grounding, reference checks, SONIC, hand controller, physics
+and evaluator. Outputs are saved under `kimodo/<phase>/`.
 
-Reference converters are offline tools. SONIC packet output is a serialization
-fixture; it does not publish a socket or DDS command. Deploy CSV conversion does
-not start the upstream C++ deployment reader.
+It exports named 36-column MuJoCo qpos at 30 Hz and limits one generated clip
+to 300 frames. Named mappings convert its XML joint order to SONIC order.
+Measured history supplies state anchors and transition boundaries; Kimodo has
+no native ARDY history conditioning. Reports record
+`history_conditioning=false`.
 
-## State recording and video
+The exploratory grasp default uses wrist offset `[0.125, 0.035, 0.080]` m and
+raw generated rotations, 100 denoising steps and constraint guidance 2. ARDY
+keeps its measured hand-center default. `--wrist-offset` overrides either
+explicitly. `--kimodo-project-constraints` enables an experimental bounded
+nominal right-arm projection; it has not demonstrated physical grasp success
+and is excluded from the measured K0 result. It is separate from learned P
+residual control.
 
-Each run saves the initial state and every completed 50 Hz control state. The
-compiled scene, joint names/addresses, MuJoCo version and state hashes are
-stored with the rollout. Full `mjSTATE_INTEGRATION` includes free-root,
-articulated fingers, dynamic objects present in the scene, controls, applied
-forces, mocap state and solver warm-start data. Physics still steps at 200 Hz;
-internal substeps are not separate recorded frames.
+## Reference and SONIC contracts
 
-The offline renderer loads the compiled scene, verifies hashes and MuJoCo
-version, restores each frame, calls `mj_forward` to update derived geometry,
-then uses `mujoco.Renderer`. It never calls `mj_step` and loads no policy. The
-default camera is fixed in world-space third-person. Named cameras work when
-present in the scene at recording time. The upstream G1 scene defines a head
-camera; the tabletop collector configures head and wrist cameras.
+A motion export contains root xyz, root quaternion **wxyz**, then 29 named
+body-joint positions. Convert by explicit names into
+`baseline.adapters.joints.ISAACLAB_JOINT_NAMES`; never assume that ARDY,
+Kimodo, MuJoCo XML and SONIC use the same column order.
 
-`vision/images.npz` contains uint8 RGB shaped `[N,C,H,W,3]`, camera names,
-simulation timestamps, state indices and original control-frame indices.
-The CLI defaults to 25 FPS RGB sampling from 50 Hz states; `--fps 50` includes
-every saved state. Optional H.264 MP4 uses the first camera and a
-uniform simulation-time grid, mapping each presentation time to the nearest
-saved state. Video metadata records that mapping. Rendering and encoding wall
-time are separate from simulation time and model latency.
+`ReferenceSequence` and `ReferenceBuffer` preserve timestamps and absolute
+frame indices, resample to 50 Hz, and recompute velocities and dependent
+kinematics after transitions or corrections. SONIC's configured ten-sample
+0–0.9 s lookahead is separate from ARDY's generation horizon and Risk's
+280 ms horizon. The selected SONIC G1 mode consumes joint positions,
+velocities and root orientation, but not world root XY. Root paths condition
+the generator; actual arrival is checked in physics.
 
-RGB is atomically published before video encoding. An encoder failure keeps
-the complete RGB archive and rollout while marking `video_status` failed.
-The MP4 is encoded to a temporary file and published only after ffmpeg exits
-successfully. A failed renderer writes its own report and can be retried with
-an automatically timestamped output directory. Large RGB runs need disk space: one
-30-second, 50 Hz, 640x480 camera is about 1.38 GB uncompressed; each additional
-camera adds a similar amount.
+The offline SONIC packet converter writes named joint positions/velocities,
+body quaternion and increasing frame indices. Protocol v1 uses a `pose` topic
+prefix, a 1280-byte JSON header and little-endian contiguous arrays. Conversion
+opens no socket and issues no robot command. Deployment CSV and packet fixtures
+do not establish live transport or hardware acceptance.
 
-CSV-only historical runs cannot be faithfully reconstructed: they lack full
-finger, object, controller and solver state. Visual snapshots are not sufficient
-counterfactual branch checkpoints either. Those experiments must additionally
-restore SONIC history, reference buffers, controller state and disturbance RNG.
-Rendered images are recording outputs, not inference inputs; camera perception
-remains outside the core study.
+## Shared control
 
-## Evidence
+`baseline/execution.py` runs the task sequencer, reference buffer, frozen
+SONIC, articulated fingers and MuJoCo assessment. The G1 root and block remain
+free. Lifting requires frictional contacts; object attachments, scripted block
+motion and support forces are not used.
 
-Synthetic fixtures validate state restoration, named cameras, timestamps,
-RGB/MP4 generation, failure reports and overwrite protection. Actual checks and
-their limits are recorded in [verification.md](verification.md). The optional
-tabletop task has been physically exercised, including collision stops and
-timeouts.
-Historical direct-start pilots have achieved grasp/lift. Those measurements
-predate the allowed hand-table contact policy and complete hold recording.
-Two fresh manipulation pilots verified the revised collection behavior;
-their evidence is recorded separately in the verification document.
-Synthetic rendering fixtures do not establish physical G1 grasp success.
+B0 runs without learned checkpoints. P supplies a matched frozen Risk,
+Residual and validation-gate set to the same executor. The correction provider
+acts after nominal adaptation and before shared checks, changes only the 14
+arm coordinates and preserves non-arm references. The common limiter bounds
+offsets, enforces their rate and active joint ranges, and recomputes velocities.
+Existing fall, collision, velocity and reference stops remain active.
+Pre-execution geometric clearance and general self-clearance prediction are
+not implemented; bounded corrections are not a collision-free guarantee.
 
-## Optional Kimodo generator
+## Recording and rendering
 
-`./run.sh batch --kimodo` and `./run.sh manual --kimodo` select the pinned
-Kimodo-G1-RP-v1 generator. The default command remains B0/ARDY. The selected
-generator is loaded lazily by `baseline/execution.py`; no Kimodo import or
-checkpoint is required for an ordinary B0 run.
+Physics steps at 200 Hz; the recorder saves the initial state and every 50 Hz
+control state. `rollout/` stores the compiled scene, names, MuJoCo version,
+`mjSTATE_INTEGRATION` states and hashes, including solver warm start, controls,
+applied forces, articulated fingers and dynamic objects. Initial state index
+is -1; later indices align with `trajectory.csv`.
 
-Kimodo is an isolated generator adapter in `baseline/kimodo.py`. It consumes
-the same text, measured history, simulator-grounded root/wrist constraints and
-phase schedule as ARDY, but does not use ARDY's history-conditioning features.
-Its converter's explicit joint names are required to match the shared 29-joint
-SONIC order. Kimodo qpos is exported at 30 Hz, converted to the shared
-`ReferenceSequence`, resampled to 50 Hz, and passed through the same reference
-checks and `SonicSimulation.install` transition. Root translation remains a
-simulator/SONIC execution concern; no object attachment or scripted motion is
-introduced.
+`nominal_context.csv` stores causal measured history and uncorrected nominal
+lookahead at 50 Hz. `task.csv` stores object/contact/clearance labels at 200 Hz.
+Teacher collection also records `effective_context.csv` for the reference
+actually delivered after controlled perturbation and shared limits. These
+streams remain distinguishable in dataset provenance.
 
-New `--kimodo --grasp` sessions use the exploratory wrist-target offset
-`[0.125, 0.035, 0.080]` metres; this is saved explicitly in `plan.json`.
-ARDY retains `wrist_offset=null`, which selects the measured hand-center site.
-Explicit overrides and saved resume configurations are not recalibrated.
-The common grounding equations, acquisition gate, contact solver, fingers,
-30-second timeout and lift/hold success criteria are unchanged. These tuned
-K0 trials are not an unbiased held-out or matched B0/P comparison.
-
-Raw Kimodo rotations are exported by default. The compatibility flag
-`--kimodo-no-projection` keeps that behavior. The mutually exclusive
-`--kimodo-project-constraints` option enables the experimental static-FK
-nominal projection in `baseline/kimodo_projection.py`: only seven right-arm
-hinges may change, within physical limits and 0.7 radians of the raw clip.
-It fits the declared hand-center target, leaves all other coordinates intact,
-uses no physics stepping or execution feedback, and is not a learned residual
-or teacher. Its single-trial failures are retained; no grasp-success claim
-is made for projection. The verified K0 batch uses raw output.
-
-Kimodo assets are intentionally separate from the B0 lock and archive:
-
-```bash
-python scripts/fetch_kimodo.py --only all
-# On an offline machine, after copying complete pinned assets:
-python scripts/fetch_kimodo.py --offline
-python scripts/package_baseline.py --scope kimodo --out output/kimodo-source.tar.gz
-```
-
-If GitHub or Hugging Face is unavailable, run the fetch command on a connected
-machine and transfer both `third_party/kimodo/` and `checkpoints/kimodo/` with
-`rsync`; the fetch script prints the exact verification command and transfer
-layout. A missing source or manifest is a setup failure, not evidence that the
-model is compatible.
+The renderer verifies the scene and version, restores states and calls
+`mj_forward` without stepping physics or rerunning SONIC. RGB/MP4 files are
+visual replay, not new independent trials. Head/wrist images are recording
+outputs and are not model inputs. Simulation time pauses during generation;
+loading, generation, controller latency, physics wall time and simulation time
+are reported separately.

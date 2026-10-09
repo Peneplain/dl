@@ -157,7 +157,18 @@ class KimodoConversionTests(unittest.TestCase):
 
 
 class KimodoSelectionTests(unittest.TestCase):
-    def test_default_is_ardy_and_flag_is_explicit(self):
+    def test_default_is_ardy_and_flags_are_explicit_and_mutually_exclusive(self):
+        from contextlib import redirect_stderr
+        import io
+
+        for mode in ("batch", "manual"):
+            with self.subTest(mode=mode):
+                self.assertEqual(config_for(parse_args([mode])),
+                                 config_for(parse_args([mode, "--ardy"])))
+            for flags in (("--ardy", "--kimodo"), ("--kimodo", "--ardy")):
+                with self.subTest(mode=mode, flags=flags), redirect_stderr(io.StringIO()), \
+                        self.assertRaises(SystemExit):
+                    parse_args([mode, *flags])
         self.assertFalse(parse_args(["batch"]).kimodo)
         args = parse_args(["batch", "--kimodo"])
         self.assertTrue(args.kimodo)
@@ -168,6 +179,7 @@ class KimodoSelectionTests(unittest.TestCase):
 
     def test_kimodo_grasp_calibration_does_not_change_ardy_or_explicit_overrides(self):
         self.assertIsNone(parse_args(["batch", "--grasp"]).wrist_offset)
+        self.assertIsNone(parse_args(["batch", "--ardy", "--grasp"]).wrist_offset)
         self.assertIsNone(parse_args(["batch", "--kimodo"]).wrist_offset)
         self.assertEqual(parse_args(["batch", "--kimodo", "--grasp"]).wrist_offset,
                          [.125, .035, .08])
@@ -223,6 +235,7 @@ class KimodoSelectionTests(unittest.TestCase):
         b0_args = parse_args(["batch"])
         kimodo_args = parse_args(["batch", "--kimodo"])
         b0_plan = make_plan(config_for(b0_args), [])
+        self.assertEqual(make_plan(config_for(parse_args(["batch", "--ardy"])), []), b0_plan)
         kimodo_plan = make_plan(config_for(kimodo_args), [])
         self.assertEqual(b0_plan["method"], "B0")
         self.assertEqual(kimodo_plan["method"], "KIMODO")

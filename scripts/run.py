@@ -68,12 +68,16 @@ def parse_request(payload, index, args):
             "reference": reference, "reference_sha256": sha256(reference) if reference else None}
 
 
-def parser_for_run():
-    parser = argparse.ArgumentParser(description=__doc__)
+def parser_for_run(*, allow_abbrev=True):
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=allow_abbrev)
     parser.add_argument("mode", choices=["batch", "manual"])
     parser.add_argument("--grasp", action="store_true", help="Enable the tabletop block grasp task; default: empty scene")
-    parser.add_argument("--kimodo", action="store_true",
-                        help="Use the pinned Kimodo-G1-RP-v1 generator; default remains frozen ARDY")
+    generator = parser.add_mutually_exclusive_group()
+    generator.add_argument("--ardy", dest="kimodo", action="store_const", const=False,
+                           help="Use the pinned frozen ARDY generator (default)")
+    generator.add_argument("--kimodo", dest="kimodo", action="store_const", const=True,
+                           help="Use the pinned Kimodo-G1-RP-v1 generator")
+    parser.set_defaults(kimodo=False)
     parser.add_argument("--batch", type=int, default=1, help="Number of batch attempts (default: 1)")
     parser.add_argument("--resume", type=Path, help="Resume a batch folder using its saved configuration")
     parser.add_argument("--output-root", type=Path, default=ROOT / "output")
@@ -152,8 +156,8 @@ def parser_for_run():
     return parser
 
 
-def parse_args(argv=None):
-    parser = parser_for_run()
+def parse_args(argv=None, *, allow_abbrev=True):
+    parser = parser_for_run(allow_abbrev=allow_abbrev)
     args = parser.parse_args(argv)
     resumed = bool(args.resume)
     if args.resume:

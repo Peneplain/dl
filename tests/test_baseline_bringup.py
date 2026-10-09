@@ -166,6 +166,20 @@ class BaselineBringupTests(unittest.TestCase):
             self.assertEqual(actual, {"README.md", "scripts/run_ardy.py", "scripts/ardy_service.py",
                                       "scripts/prepare_deploy_motion.py", "configs/baseline.lock.json"})
 
+    def test_baseline_scopes_include_the_documentation_linked_from_readme(self):
+        root = Path(__file__).resolve().parents[1]
+        linked_docs = {
+            "docs/baseline.md", "docs/commands.md", "docs/grasp.md",
+            "docs/learning.md", "docs/project_context.md",
+            "docs/track4_requirements.md", "docs/verification.md",
+            "docs/proposal.tex",
+        }
+        for scope in ("b0", "kimodo"):
+            with self.subTest(scope=scope):
+                files = {path.relative_to(root).as_posix()
+                         for path in source_files(root, scope)}
+                self.assertTrue(linked_docs <= files, linked_docs - files)
+
     def test_archive_rejects_source_symlink(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

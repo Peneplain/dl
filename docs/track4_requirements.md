@@ -1,74 +1,48 @@
-# Track4 Delivery Requirements
+# Track 4 Submission Requirements
 
-This checklist is derived from the Track4 brief supplied with the project. It
-keeps the course deliverables separate from the B0 pilot status and identifies
-what must be completed before a final demonstration.
+The project uses the assignment's Unitree G1 simulation and frozen SONIC
+control requirement. ARDY and Kimodo are distinct implemented motion generators.
+The Risk/Residual extension studies selective correction of ARDY and is
+reported separately. Implementation evidence and unresolved limits are in
+[verification](verification.md); the approved research plan is
+[proposal.tex](proposal.tex).
 
-## Required evidence
+## Evidence to include
 
-| Requirement | Repository evidence | Current boundary |
+| Requirement | Repository support | Submission work |
 | --- | --- | --- |
-| Explain the supervised Archon session | Report and presentation section covering inputs, recorded data, model outputs, and robot control flow | The visit is external to this repository; no visit is claimed here. |
-| Use SONIC as the low-level controller | `baseline/sonic_policy.py`, `baseline/simulation.py`, `docs/integration.md` | B0 uses the pinned SONIC encoder/decoder/config and records provenance; full-model MUSA evidence is kept in `docs/verification.md`. |
-| Text-driven tabletop grasp and lift | `baseline/execution.py`, `baseline/grasp.py`, `docs/grasp.md` | B0 has a simulator-state-grounded pilot with a dynamic block, articulated fingers, and a free root. Exploratory failures remain in the denominator. |
-| Compare two distinct motion-generation methods | B0 is implemented; the proposal defines Risk + Residual (P) as the second method | P networks, training, and the shared correction hook are not implemented yet. Prompt variants or finger variants must not be presented as a second motion generator. |
-| Shared repeated evaluation | `docs/proposal.tex` defines paired seeds, prompts, conditions, success, Wilson intervals, and bootstrap differences | The existing 20-episode calibration is B0 exploratory evidence, not the final B0/P comparison. |
-| Show success and failure videos for both methods | `scripts/render.py` restores recorded states without stepping physics | B0 examples are listed below. P videos require P implementation and matched rollouts; do not relabel B0 variants as P. |
-| Public reproducible repository | Source, configs, tests, commands, and provenance documentation | Keep checkpoints, credentials, generated rollouts, and restricted Archon data out of Git. |
+| Supervised Archon session | Simulation code does not replace the visit | Book at least two days ahead; explain real demonstration recording and policy-inference inputs, data, outputs and control flow. Keep restricted data private. |
+| SONIC integration | `baseline/`, model/source locks and [integration contract](baseline.md) | Explain named reference conversion, G1 representation, frozen SONIC tracking, free-root/lower-body behavior and separate fingers. |
+| Text-driven grasp/lift | English phase prompts and shared physical tabletop task | Show text and corresponding grasp/lift behavior. Disclose simulator-state grounding and manipulation-only versus walking conditions. |
+| Two distinct motion-generation methods | Frozen ARDY (`--ardy`) and Kimodo (`--kimodo`) | Compare with predeclared common instructions, seeds, scene/controller settings and repeated trials. Changing prompts alone is not a second generator. |
+| Evaluation and analysis | Reports, seeds, task states, hashes and matched B0/P results | Report success/uncertainty, response time, user corrections, failures, instruction following, precision, physical feasibility and object interaction. |
+| Demonstration videos | State-based RGB/MP4 renderer | Retain representative successes and failures for both submitted generator methods, and P if claiming the extension. Show actual instructions. |
+| Public reproducible source | Setup, commands, configs, data tooling and tests | Supply the repository link; exclude credentials, model weights, generated bulk data and restricted third-party/robot material. |
 
-The report must also discuss instruction following, spatial precision, physical
-feasibility, object interaction, response time, user corrections, failures, and
-lower-body stabilization. The current executor records simulation time,
-wall-clock generation/inference time, correction count, contact outcomes,
-tracking error, and free-root state so those quantities can be reported without
-mixing clocks or treating windows as independent trials.
+Kimodo's tuned 11/20 batch and the 60-pair B0/P experiment have different seeds
+and selection context. They cannot be presented as one fair three-method
+comparison. The existing B0/P repeat is a single learned-checkpoint experiment,
+not completion of all proposal controls and ablations.
 
-## Video evidence
+## Deliverables
 
-These B0 recordings are rendered from complete MuJoCo state archives. The
-request JSON next to each video supplies the text-driven phase prompts; the
-report must show that text beside the corresponding video rather than implying
-that the renderer performed inference.
+- A 5–8 page report excluding references, covering the Archon workflow,
+  simulation system, compared generators, evaluation, failures and extensions.
+- A 10-minute presentation with required demonstration, followed by 5 minutes
+  of Q&A. Recorded demonstrations are acceptable.
+- Videos with text instructions and corresponding behavior, including success
+  and failure for both methods.
+- A public GitHub repository with setup, configurations and evaluation code;
+  include data access and conversion scripts when claiming the data extension.
 
-| B0 case | Video | Recorded outcome |
-| --- | --- | --- |
-| Open-hand success | `output/grasp-review-261003-IR6tcT/paired20/open-seed-012/vision/video.mp4` | Retained lift/hold in the paired calibration. |
-| Open-hand success | `output/grasp-review-261003-IR6tcT/paired20/open-seed-004/vision/video.mp4` | Retained success example. |
-| Open-hand failure | `output/grasp-review-261003-IR6tcT/paired20/open-seed-003/vision/video.mp4` | `grasp_lost_after_success` in the historical protocol. |
-| Open-hand failure | `output/grasp-review-261004-torso/open-seed-001/vision/video.mp4` | Fresh torso-constrained run timed out after contact loss. |
+If claiming the optional data-collection extension, provide synchronized
+images/actions/states converted to LeRobot with instructions, timestamps and
+episode boundaries. Current rollout/NPZ training files are not automatically
+LeRobot exports. Real-robot deployment is an optional supervised activity that
+requires the course's prior review/approval; the simulation results do not
+establish it.
 
-The final submission needs the same success/failure selection for P under the
-same prompts, scene seeds, physics, controller, and video settings. A B0-only
-video set is useful for debugging but does not satisfy the method-comparison
-deliverable by itself.
-
-## P implementation gate
-
-The frozen B0 logger now writes `nominal_context.csv` at the SONIC 50 Hz clock.
-Each row contains the measured current root/body state, current planned finger
-targets and phase, plus the 0--0.9 s nominal joint position/velocity/quaternion
-lookahead. Object, clearance, contact, and threshold labels stay in
-`task.csv` at 200 Hz. This is the intended causal extraction boundary for P:
-future executed states and teacher outputs are absent from the input file.
-
-Before claiming P results, implement and verify the following in a separate
-package that depends on `baseline/`:
-
-1. Split parent episodes, including nominal and counterfactual branches, before
-   extracting windows; hold out prompt paraphrases and scene seeds.
-2. Restore simulator state, SONIC history, reference buffers, controller
-   history, and disturbance seeds for every counterfactual branch.
-3. Train Risk first from nominal future execution, freeze it, then train bounded
-   arm-only Residual offsets using predicted risk features. Do not feed future
-   executed states or teacher corrections at inference time.
-4. Apply the shared arm mask, correction bounds, rate limit, clearance checks,
-   and low-risk zero-offset gate before the existing shared checks. Recompute
-   velocities and dependent fields after correction and resampling.
-5. Reuse the B0 sequencer, articulated hand controller, scene, evaluator,
-   timestamps, and video renderer. Record model hashes, thresholds, latency,
-   gate decisions, corrections, and branch provenance with every P episode.
-6. Run the planned B0/B1/I2/P conditions with paired instructions, seeds, and
-   perturbations; report Wilson intervals and episode-level bootstrap intervals.
-
-Until this gate is satisfied, the repository status is an honest B0 pilot plus
-P-ready causal recording, not a completed two-method study.
+Acknowledge external models/code/data and LLM assistance under the course's
+policy. Report unsuccessful trials and unfinished research honestly. A focused
+comparison with reproducible evidence is valuable even without a high success
+rate or an improvement from P.

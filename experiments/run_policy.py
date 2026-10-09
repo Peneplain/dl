@@ -19,10 +19,22 @@ def prepare_plan(args):
     options = list(args.baseline_options)
     if options and options[0] == "--":
         options.pop(0)
-    forbidden = {"--resume", "--batch", "--plan-only", "--output-root", "--gui"}
+    forbidden = {"--resume", "--batch", "--plan-only", "--output-root", "--gui",
+                 "--risk-checkpoint", "--risk", "--residual-checkpoint", "--residual",
+                 "--risk-gate", "--gate", "--risk-interface", "--risk-device", "--risk-update-hz"}
     if any(option.split("=", 1)[0] in forbidden for option in options):
-        raise ValueError("Requests and fresh output are controlled by this experiment entry point")
-    baseline = baseline_args(["batch", "--grasp", *options])
+        raise ValueError("Requests, fresh output and learned controller options "
+                         "are controlled by this experiment entry point")
+    baseline = baseline_args(["batch", "--grasp", *options], allow_abbrev=False)
+    if baseline.kimodo:
+        raise ValueError("B0/P evaluation requires ARDY; use run.sh batch --kimodo "
+                         "for standalone Kimodo execution")
+    # Keep parsed settings checked as well so the baseline plan cannot carry
+    # a second controller alongside the experiment's recorded artifacts.
+    if any(getattr(baseline, key) is not None for key in (
+            "risk_checkpoint", "residual_checkpoint", "risk_gate",
+            "risk_interface", "risk_device", "risk_update_hz")):
+        raise ValueError("Learned controller options are controlled by this experiment entry point")
     payloads = json.loads(args.requests.read_text())
     if not isinstance(payloads, list) or not payloads:
         raise ValueError("--requests must contain a nonempty JSON list of baseline request objects")
