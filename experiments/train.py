@@ -20,7 +20,7 @@ from risk_residual.checkpoints import load_checkpoint
 from risk_residual.audit import require_ready, supervision_summary
 from risk_residual.config import SCHEMA, ModelConfig
 from risk_residual.data import Normalizer, WindowDataset
-from risk_residual.losses import residual_loss, risk_loss
+from risk_residual.losses import future_onset_targets, residual_loss, risk_loss
 from risk_residual.models import ResidualModel, RiskModel, freeze_risk, risk_features
 
 
@@ -60,6 +60,38 @@ class EarlyStopping:
         return self.bad_epochs >= self.patience
 
 
+def validation_scheduler_options(settings, learning_rate, early_stop):
+    """Optional plateau schedule shares total-val-loss checkpoint semantics.
+
+    A missing or empty configuration preserves the fixed learning rate. An
+    enabled schedule reacts to the completed natural validation pass, never
+    training loss or test data. Exact improvements use the existing best.pt
+    selection metric; early stopping must use that metric when enabled too.
+    """
+    if settings is None:
+        return None
+    allowed = {"type", "factor", "patience", "min_lr", "monitor"}
+    if not isinstance(settings, dict) or set(settings) - allowed:
+        raise ValueError("Invalid lr_scheduler fields")
+    if not settings:
+        return None
+    factor = settings.get("factor", .5)
+    patience = settings.get("patience", 2)
+    min_lr = settings.get("min_lr", 1e-6)
+    if (settings.get("type", "reduce_on_plateau") != "reduce_on_plateau"
+            or settings.get("monitor", "val_loss") != "val_loss"
+            or (early_stop.enabled and early_stop.monitor != "val_loss")):
+        raise ValueError("Plateau scheduling and enabled early stopping must monitor val_loss, matching best.pt")
+    if (isinstance(factor, (bool, np.bool_)) or not isinstance(factor, (int, float))
+            or not np.isfinite(factor) or not 0 < factor < 1
+            or not isinstance(patience, int) or isinstance(patience, bool) or patience < 0
+            or isinstance(min_lr, (bool, np.bool_)) or not isinstance(min_lr, (int, float))
+            or not np.isfinite(min_lr) or not 0 <= min_lr < learning_rate):
+        raise ValueError("Plateau scheduling needs factor in (0, 1), nonnegative integer patience, and min_lr below initial learning_rate")
+    return {"mode": "min", "factor": float(factor), "patience": patience,
+            "threshold": 0., "threshold_mode": "abs", "min_lr": float(min_lr)}
+
+
 def balanced_intervention_weights(arrays):
     """Equal expected Risk class mass, fitted on TRAIN labels only.
 
@@ -85,13 +117,79 @@ def balanced_intervention_weights(arrays):
                      "note": "Window balancing is not an increase in independent episodes."}
 
 
+def _recovery_fraction(value):
+    if (isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float))
+            or not np.isfinite(value) or not 0 < value < 1):
+        raise ValueError("risk_recovery_fraction must be an explicit finite number in (0, 1)")
+    return float(value)
+
+
+def verified_recovery_weights(arrays, parents, fraction):
+    """Reserve TRAIN sampling mass for verified recovery, balanced by origin.
+
+    Original prompt/scene origins share recovery mass equally, then divide it
+    between their correction windows. Every other window retains equal positive
+    background mass, including censored intervention labels with auxiliary
+    supervision. This changes exposure, not labels or the epoch draw budget.
+    """
+    fraction = _recovery_fraction(fraction)
+    masks = {key: np.asarray(arrays[key]) for key in
+             ("correction_sample", "teacher_verified", "intervention_valid")}
+    correction = masks["correction_sample"]
+    labels, ids = np.asarray(arrays["intervention_target"]), np.asarray(arrays["parent_id"])
+    if (correction.ndim != 1 or labels.shape != correction.shape or ids.shape != correction.shape
+            or any(value.dtype != np.bool_ or value.shape != correction.shape for value in masks.values())):
+        raise ValueError("Invalid verified recovery sampling arrays")
+    if np.any(correction & (~masks["teacher_verified"] | ~masks["intervention_valid"] | (labels != 1))):
+        raise ValueError("Every correction window requires a verified teacher and an available positive intervention label")
+    valid = masks["intervention_valid"]
+    if not np.isin(labels[valid], [0, 1]).all():
+        raise ValueError("Sampling requires binary available labels")
+    if not correction.any() or correction.all():
+        raise ValueError("Verified recovery sampling requires TRAIN recovery and background windows")
+    clusters = {}
+    for index, pid in enumerate(ids):
+        parent = parents.get(str(pid))
+        if parent is None or parent.get("split") != "train":
+            raise ValueError("Recovery sampling can only be fitted on TRAIN parents")
+        if correction[index]:
+            if any(parent.get(key) is None or not str(parent[key]).strip() for key in ("prompt_group", "scene_seed")):
+                raise ValueError("Recovery windows need original prompt/scene origin provenance")
+            clusters.setdefault((str(parent["prompt_group"]), str(parent["scene_seed"])), []).append(index)
+    n, background_count = len(correction), int((~correction).sum())
+    cluster_mass = fraction / len(clusters)
+    weights = np.full(n, (1 - fraction) / background_count, dtype=np.float64)
+    origins = []
+    for (prompt, scene), indices in sorted(clusters.items()):
+        weights[indices] = cluster_mass / len(indices)
+        origins.append({"prompt_group": prompt, "scene_seed": scene, "windows": len(indices),
+                        "sampling_mass": cluster_mass, "expected_draws_per_epoch": n * cluster_mass,
+                        "expected_draws_per_window_per_epoch": n * cluster_mass / len(indices)})
+    return weights, {
+        "mode": "verified_recovery", "fit_split": "train", "replacement": True,
+        "recovery_fraction": fraction, "samples_per_epoch": n,
+        "unique_recovery_windows": int(correction.sum()), "unique_recovery_origins": len(clusters),
+        "unique_background_windows": background_count,
+        "sampling_mass": {"recovery": fraction, "background": 1 - fraction},
+        "expected_draws_per_epoch": {"recovery": n * fraction, "background": n * (1 - fraction)},
+        "expected_draws_per_background_window_per_epoch": n * (1 - fraction) / background_count,
+        "recovery_origins": origins,
+        "censored_background_windows": int((~correction & ~valid).sum()), "excluded_censored": 0,
+        "recovery_proof": ["correction_sample", "teacher_verified", "intervention_valid", "intervention_target == 1"],
+        "validation_distribution": "unchanged natural validation windows",
+        "normalizer_distribution": "unchanged complete natural training windows",
+        "note": "Recovery origin balancing does not add independent episodes. Expected draws and repeats are not realized counts.",
+    }
+
+
 def reduction_counts(stage, batch):
     """Aggregate validation by supervised elements/sets, independent of batch partition."""
     if stage == "risk":
         valid = batch["future_valid"]
         return {"tracking": valid.sum(), "balance": valid.sum(),
                 "contact": (valid & batch["contact_mask"]).sum(),
-                "intervention": batch["intervention_valid"].sum()}
+                "intervention": batch["intervention_valid"].sum(),
+                "future_onset": future_onset_targets(batch)[1].sum()}
     available = batch["residual_valid"]
     correction, stable = batch["correction_sample"], batch["stable_sample"]
     return {"correction": (correction & available.any(-1)).sum(),
@@ -106,10 +204,31 @@ def train(args):
     budget = settings["training"]
     early_stop = EarlyStopping(budget.get("early_stopping"))
     sampling_mode = budget.get("risk_sampling", "natural")
-    if sampling_mode not in {"natural", "balanced_intervention"}:
-        raise ValueError("risk_sampling must be natural or balanced_intervention")
+    if not isinstance(sampling_mode, str) or sampling_mode not in {"natural", "balanced_intervention", "verified_recovery"}:
+        raise ValueError("risk_sampling must be natural, balanced_intervention or verified_recovery")
     if args.stage != "risk" and (sampling_mode != "natural" or early_stop.monitor == "val_intervention"):
         raise ValueError("Risk-specific sampling/monitor cannot be used for residual training")
+    if "risk_recovery_fraction" in budget and (args.stage != "risk" or sampling_mode != "verified_recovery"):
+        raise ValueError("risk_recovery_fraction applies only to verified_recovery Risk sampling")
+    recovery_fraction = (_recovery_fraction(budget.get("risk_recovery_fraction"))
+                         if sampling_mode == "verified_recovery" else None)
+    future_onset_weight = budget.get("future_onset_weight", 0.0)
+    future_onset_positive_weight = budget.get("future_onset_positive_weight", 1.0)
+    if (isinstance(future_onset_weight, (bool, np.bool_))
+            or not isinstance(future_onset_weight, (int, float))
+            or not np.isfinite(future_onset_weight) or future_onset_weight < 0):
+        raise ValueError("future_onset_weight must be a finite nonnegative number")
+    if (isinstance(future_onset_positive_weight, (bool, np.bool_))
+            or not isinstance(future_onset_positive_weight, (int, float))
+            or not np.isfinite(future_onset_positive_weight) or future_onset_positive_weight <= 0):
+        raise ValueError("future_onset_positive_weight must be a finite positive number")
+    if args.stage != "risk" and future_onset_weight != 0:
+        raise ValueError("future_onset_weight applies only to Risk training")
+    if "residual_samples_per_epoch" in budget:
+        samples = budget["residual_samples_per_epoch"]
+        if (args.stage != "residual" or not isinstance(samples, int)
+                or isinstance(samples, bool) or samples < 1):
+            raise ValueError("residual_samples_per_epoch must be a positive integer for residual training only")
     if (budget["epochs"] < 1 or budget["batch_size"] < 1
             or not 0 < budget["correction_fraction"] < 1
             or any(not np.isfinite(budget[key]) or budget[key] < 0 for key in
@@ -117,6 +236,8 @@ def train(args):
             or budget["learning_rate"] == 0 or not np.isfinite(budget["gradient_clip"])
             or budget["gradient_clip"] <= 0):
         raise ValueError("Invalid fixed training budget")
+    scheduler_options = validation_scheduler_options(budget.get("lr_scheduler"),
+                                                      budget["learning_rate"], early_stop)
     device = device_for(args.device)
     torch.set_num_threads(args.threads)
     random.seed(args.seed)
@@ -154,8 +275,13 @@ def train(args):
     training = train_data
     validation = val_data
     sampling_report = {"mode": "natural", "fit_split": "train", "samples_per_epoch": len(train_data)}
+    residual_sampling = None
     if args.stage == "risk" and sampling_mode == "balanced_intervention":
         weights, sampling_report = balanced_intervention_weights(train_data.arrays)
+        sampler = WeightedRandomSampler(torch.from_numpy(weights), len(train_data),
+                                         replacement=True, generator=generator)
+    if args.stage == "risk" and sampling_mode == "verified_recovery":
+        weights, sampling_report = verified_recovery_weights(train_data.arrays, train_data.parents, recovery_fraction)
         sampler = WeightedRandomSampler(torch.from_numpy(weights), len(train_data),
                                          replacement=True, generator=generator)
     if args.stage == "residual":
@@ -169,8 +295,23 @@ def train(args):
         weights = np.where(a["correction_sample"][selected], ratio / correction_count,
                             (1 - ratio) / stable_count)
         training = Subset(train_data, selected.tolist())
-        sampler = WeightedRandomSampler(torch.from_numpy(weights), len(selected),
+        samples = budget.get("residual_samples_per_epoch", len(selected))
+        sampler = WeightedRandomSampler(torch.from_numpy(weights), samples,
                                          replacement=True, generator=generator)
+        sampling_report = {"mode": "not_applied", "reason": "Residual uses correction/identity sampling"}
+        residual_sampling = {
+            "mode": "balanced_correction_identity", "fit_split": "train", "replacement": True,
+            "unique_correction_samples": correction_count, "unique_stable_samples": stable_count,
+            "unique_selected_samples": len(selected), "samples_per_epoch": samples,
+            "budget_source": "explicit" if "residual_samples_per_epoch" in budget else "selected_count_default",
+            "sampling_mass": {"correction": ratio, "stable": 1 - ratio},
+            "expected_draws_per_epoch": {"correction": samples * ratio, "stable": samples * (1 - ratio)},
+            "expected_draws_per_unique_sample_per_epoch": {
+                "correction": samples * ratio / correction_count,
+                "stable": samples * (1 - ratio) / stable_count},
+            "validation_distribution": "unchanged correction/identity validation windows without resampling",
+            "note": "Counts describe unique selected windows, not independent recovery episodes. Expected draws are not realized counts.",
+        }
         selected_val = np.flatnonzero(val_data.arrays["correction_sample"] |
                                       val_data.arrays["stable_sample"])
         if not len(selected_val):
@@ -183,6 +324,11 @@ def train(args):
     }
     optimizer = torch.optim.AdamW(model.parameters(), lr=budget["learning_rate"],
                                   weight_decay=budget["weight_decay"])
+    scheduler = (torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **scheduler_options)
+                 if scheduler_options is not None else None)
+    scheduler_report = ({"enabled": True, "type": "reduce_on_plateau", "monitor": "val_loss",
+                         **scheduler_options} if scheduler is not None
+                        else {"enabled": False, "type": "fixed"})
     provenance = {
         "kind": args.stage, "schema": SCHEMA, "model_config": config.to_dict(),
         "settings": settings, "seed": args.seed, "interface": args.interface,
@@ -194,20 +340,26 @@ def train(args):
         "torch": str(torch.__version__), "numpy": np.__version__, "device": str(device),
         "parameters": sum(p.numel() for p in model.parameters()), "adapter_parameters": 0,
         "inference_inputs": ["history", "nominal", "context"],
-        "loss_normalization": "risk: available elements; residual: arm squared norm/time/sample; smoothness: time-sum/sample",
+        "loss_normalization": "risk: available elements; future_onset/intervention: valid windows; residual: arm squared norm/time/sample; smoothness: time-sum/sample",
         "training_controls": {"risk_sampling": sampling_report,
+                              "lr_scheduler": scheduler_report,
                               "early_stopping": {"enabled": early_stop.enabled, "patience": early_stop.patience,
                                                  "min_delta": early_stop.min_delta, "monitor": early_stop.monitor},
                               "budget_epochs": budget["epochs"],
+                              "future_onset_weight": float(future_onset_weight),
+                              "future_onset_positive_weight": float(future_onset_positive_weight),
                               "checkpoint_selection": "exact minimum total validation loss"},
     }
+    if residual_sampling is not None:
+        provenance["training_controls"]["residual_sampling"] = residual_sampling
     history = []
     best = float("inf")
     best_epoch = 0
     updates = 0
     start = time.perf_counter()
     for epoch in range(budget["epochs"]):
-        metrics = {"epoch": epoch + 1}
+        epoch_start_updates = updates
+        metrics = {"epoch": epoch + 1, "learning_rate": optimizer.param_groups[0]["lr"]}
         for split, loader in loaders.items():
             model.train(split == "train")
             numerators, denominators = {}, {}
@@ -217,7 +369,9 @@ def train(args):
                 with torch.set_grad_enabled(split == "train"):
                     if args.stage == "risk":
                         loss, parts = risk_loss(model(**inputs), batch,
-                                            auxiliary_weight=budget["auxiliary_weight"])
+                                            auxiliary_weight=budget["auxiliary_weight"],
+                                            future_onset_weight=future_onset_weight,
+                                            future_onset_positive_weight=future_onset_positive_weight)
                     else:
                         with torch.no_grad():
                             features = risk_features(risk(**inputs), args.interface)
@@ -239,15 +393,26 @@ def train(args):
             reduced = {key: numerators[key] / max(1, denominators[key]) for key in numerators}
             metrics[split + "_components"] = reduced
             if args.stage == "risk":
-                metrics[split + "_loss"] = reduced["intervention"] + budget["auxiliary_weight"] * sum(
-                    reduced[key] for key in ("tracking", "contact", "balance"))
+                metrics[split + "_loss"] = (reduced["intervention"] +
+                    budget["auxiliary_weight"] * sum(reduced[key] for key in
+                                                       ("tracking", "contact", "balance")) +
+                    future_onset_weight * reduced["future_onset"])
             else:
                 metrics[split + "_loss"] = (reduced["correction"] + budget["alpha"] * reduced["identity"]
                                             + budget["beta"] * reduced["smoothness"])
+        metrics["learning_rate_before_scheduler"] = optimizer.param_groups[0]["lr"]
+        if scheduler is not None:
+            scheduler.step(metrics["val_loss"])
+        metrics["learning_rate_after_scheduler"] = optimizer.param_groups[0]["lr"]
+        metrics["learning_rate_reduced"] = (metrics["learning_rate_after_scheduler"]
+                                             < metrics["learning_rate_before_scheduler"])
+        metrics.update(updates_this_epoch=updates - epoch_start_updates, cumulative_updates=updates)
         history.append(metrics)
         print(json.dumps(metrics), flush=True)
         checkpoint = {**provenance, "epoch": epoch + 1, "updates": updates,
                       "model": model.state_dict(), "normalizer": normalizer.state_dict()}
+        if scheduler is not None:
+            checkpoint["lr_scheduler_state"] = scheduler.state_dict()
         torch.save(checkpoint, args.out / "last.pt")
         if metrics["val_loss"] < best:
             best = metrics["val_loss"]

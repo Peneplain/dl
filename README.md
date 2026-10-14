@@ -19,8 +19,8 @@ state.
   criteria.
 - [Learning](docs/learning.md): data collection, verified teacher pairs,
   tensor contracts, training and checkpoint provenance.
-- [Measured results](docs/verification.md): dataset, model and physical trial
-  evidence with limitations.
+- [Verification guide](docs/verification.md): source and checkpoint compatibility,
+  evidence boundaries and physical-trial accounting.
 - [Submission requirements](docs/track4_requirements.md).
 - [Current project context](docs/project_context.md).
 
@@ -100,21 +100,29 @@ Physics runs at 200 Hz, SONIC references at 50 Hz, and Risk/Residual updates at
 assessment are shared between B0 and P. This executor pauses simulation during
 motion generation; it does not establish real-time deployment.
 
-## Retained verified evidence
+## Implementation and evidence boundaries
 
-Risk and Residual training, validation gate selection and physical execution
-through `./run.sh batch` are complete. The final dataset contains 82,060 train,
-29,248 validation and 29,497 test windows. Correction supervision is much
-smaller: 30, 9 and 13 samples respectively. Related branches share original
-parents; window and source-entry counts are not independent trial counts.
+The learning package implements staged supervised training: train Risk, freeze
+it, then train Residual using predicted body/time features. The normalizer is
+fitted on training inputs and stored in each checkpoint. Runtime loads a
+matched Risk, Residual and gate bundle and checks its dataset, schema and
+normalizer provenance.
 
-In the fixed seed cohort 61020–61079, three batches total 60 matched B0/P trials; **both methods
-succeeded in 23/60 trials (38.33%)**. P-only and B0-only successes were seven
-each. This establishes working learned control but no aggregate task-success
-improvement. The tuned Kimodo batch achieved 11/20 successes; its seeds and
-calibration differ, so it cannot be pooled with or ranked against that B0/P
-experiment. See [verification](docs/verification.md) for exact artifacts,
-uncertainty and predictive-versus-reactive metrics.
+The canonical Residual predicts bounded arm offsets. Its loss uses the stored
+teacher-minus-nominal target without clipping that target, and the shared
+executor enforces joint, magnitude and rate limits. Native training sidecars
+may use a different architecture or target contract; their matching source and
+adapter must accompany the artifacts. Copying such weights into the canonical
+loader does not establish compatibility.
+
+Training completion, synthetic checks, full-model execution and admitted
+physical results are separate kinds of evidence. Keep exact dataset sizes,
+losses, trial outcomes, videos and selected-checkpoint manifests in the
+corresponding ignored output artifacts. The implementation supports controlled
+teacher pairs and shared execution; it does not establish general recovery
+from arbitrary natural failures or a complete comparison of all risk
+interfaces. Kimodo integration also needs a fair repeated-trial comparison
+under the same SONIC task conditions before a generator ranking is claimed.
 
 ## Quick start on the S4000 host
 
@@ -140,7 +148,7 @@ scripts/            Host workflows, asset tools, rendering and guarded pipelines
 configs/            Source/model locks, prompts and learning/data configurations
 docker/             Vendor MUSA container launcher and rendering/GUI support
 tests/              Contracts, regression checks and physical/rendering probes
-docs/               Setup, task, learning, measured results and frozen proposal
+docs/               Setup, task, learning, verification guide and frozen proposal
 checkpoints/        Local model assets and manifests (ignored)
 third_party/        Pinned upstream checkouts (ignored)
 output/             Datasets, checkpoints, trials and rendered videos (ignored)

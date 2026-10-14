@@ -1,204 +1,118 @@
 # Risk and Residual Learning
 
-The learned controller augments the frozen ARDY–SONIC reference workflow.
-Risk is trained first, then frozen; Residual is trained with **predicted Risk
-features**, not ground-truth labels. Both models are trained and physically
-integrated. [Verification](verification.md) records the current artifacts and
-results. Training availability and offline accuracy do not establish a grasp
-success advantage.
+The learning package adds predictive correction to the frozen ARDY + SONIC
+simulation workflow. Training and deployment use separate stages: train Risk,
+freeze it, then train Residual with predicted Risk features. Joint fine-tuning
+is deferred. Keep per-run results, selected-artifact paths and measured counts
+in ignored output artifacts; this page documents reproducible semantics.
 
 ## Package boundaries
 
 | Module | Responsibility |
 | --- | --- |
-| `risk_residual/config.py` | Versioned tensor schema and model settings |
-| `risk_residual/models.py` | Risk and bounded arm-only Residual Transformers |
-| `risk_residual/losses.py` | Masked auxiliary, correction, identity and smoothness losses |
-| `risk_residual/data.py` | Split audit, labels and train-only normalization |
-| `risk_residual/checkpoints.py` | Baseline/schema/dataset/checkpoint provenance |
-| `risk_residual/runtime.py` | Causal features, gating and online corrections |
-| `baseline/reference_checks.py` | Shared arm mask, joint limits and offset/rate limits |
-| `experiments/plan_data.py` | Split planning and batch indexing |
-| `experiments/collect_pair.py`, `collect_pairs.py` | Verified controlled clean/perturbed pairs |
-| `experiments/build_dataset.py`, `audit_dataset.py` | NPZ extraction and supervision readiness |
-| `experiments/diagnose_labels.py`, `calibrate_labels.py` | Continuous label diagnosis and train-only calibration |
-| `experiments/train.py`, `evaluate_risk.py` | Training, frozen validation gate and test metrics |
-| `experiments/run_policy.py`, `statistics.py` | Closed-loop trials and episode-level uncertainty |
+| `risk_residual/config.py` | Tensor schema, clocks and model settings |
+| `risk_residual/models.py` | Structured Risk and bounded arm-only Residual Transformers |
+| `risk_residual/losses.py` | Masked auxiliary, intervention, correction, identity and smoothness losses |
+| `risk_residual/data.py` | Input/target audit and train-only normalization |
+| `risk_residual/checkpoints.py` | Model, dataset, normalizer and gate compatibility |
+| `risk_residual/runtime.py` | Causal features, gate and receding-horizon corrections |
+| `baseline/reference_checks.py` | Shared arm mask, joint, offset and rate limits |
+| `experiments/plan_data.py` | Original-parent split and immutable collection plans |
+| `experiments/collect_pair.py`, `collect_pairs.py` | Controlled verified teacher pairs |
+| `experiments/build_dataset.py`, `audit_dataset.py` | Window extraction and supervision readiness |
+| `experiments/train.py`, `evaluate_risk.py` | Staged training and validation-selected gates |
+| `experiments/run_policy.py`, `statistics.py` | Closed-loop evaluation and episode-level analysis |
 
-Baseline-only execution does not require learned checkpoints. The learning
-package uses the shared baseline interfaces; it must not copy a separate
-physics controller, task evaluator or finger policy.
+B0 requires no learning-package imports or correction checkpoints. Learning
+uses the shared baseline reference, controller, finger, physics and evaluator
+interfaces.
 
-## Causal tensor and clock contract
+## Causal tensors and clocks
 
-Risk receives 16 measured samples at 50 Hz (300 ms history) and eight nominal
-samples 40 ms apart (0–280 ms). This is separate from SONIC's ten-sample
-0–0.9 s lookahead and ARDY's generation horizon.
+Risk receives 16 measured samples at 50 Hz, spanning 300 ms, and eight nominal
+samples 40 ms apart, spanning 0–280 ms. These are separate from ARDY's generation
+horizon and SONIC's observation-configured lookahead.
 
-| Tensor | Shape | Contents |
+| Tensor | Shape per sample | Contents |
 | --- | --- | --- |
-| History | `16 × 119` | 29 joint positions, 29 velocities, root wxyz quaternion, 3 angular velocities, 14 object-relative pose fields, 2 hand contacts, 29 tracking errors, 9 phase indicators |
-| Nominal future | `8 × 62` | 29 joint positions, 29 velocities, root wxyz quaternion |
-| Planned context | `8 × 23` | 9 phase indicators and 14 planned finger commands |
-| Learned risk tokens | `8 × 4 × 32` | Time/body features for left arm/hand, right arm/hand, torso and lower body |
-| Residual | `8 × 29` with arm mask | Only 14 arm coordinates may be nonzero |
+| History | `16 × 119` | Joint positions/velocities, root wxyz quaternion, angular velocity, object-relative poses, hand contacts, tracking errors and phase |
+| Nominal future | `8 × 62` | 29 joint positions, 29 velocities and root wxyz quaternion |
+| Planned context | `8 × 23` | Nine phase indicators and 14 finger commands |
+| Structured Risk | `8 × 4 × 32` | Future-time features for left arm/hand, right arm/hand, torso and lower body |
+| Residual | `8 × 29` | Fourteen arm coordinates; all other offsets are zero |
 
-Joint order is `ISAACLAB_JOINT_NAMES`. The phase vocabulary is stand,
-approach, settle, prepare, reach, lower, close, lift and hold; lower replans map
-to lower. Inference sees current/past executed state and current planned
-reference only. No future executed state, teacher action, correction target,
-future contact or ground-truth Risk label enters the models.
+Joint order is `ISAACLAB_JOINT_NAMES`. Inference uses current/past execution
+and future planned references. Future executed states, teacher actions,
+correction targets and ground-truth risk labels never enter inference inputs.
+The canonical converter keeps causal phase/finger context fixed over an
+eligible window; runtime repeats the current commanded context to match it.
 
-`nominal_context.csv` records causal inputs at 50 Hz. `task.csv` contains
-200 Hz privileged object/contact/clearance labels. Pre-decision MuJoCo states
-provide current relative poses, contact and balance information. Pair
-collection records `effective_context.csv` separately for perturbed references
-actually delivered through shared limits. The converter pins report, context,
-task, rollout and pair hashes rather than silently mixing these sources.
+Risk predicts tracking, phase-dependent contact, balance and intervention.
+Auxiliary labels come from nominal future execution. A verified same-state
+recovery may add an intervention positive without replacing those auxiliary
+labels. Open-hand phases do not supervise grasp loss. Missing future targets
+are masked; an incomplete future with no observed violation is censored.
 
-Risk has tracking, phase-dependent contact, balance and intervention heads.
-Labels use nominal future execution; a verified same-state recovery adds a
-separate direct intervention positive without replacing auxiliary targets.
-Open-hand phases are not contact-loss positives. Missing future targets are
-masked; a partial future with no observed violation is censored, not a negative.
-Normalization is fitted on train inputs only.
+## Data and teacher contract
 
-## Dataset and split rules
+Split original parents before extracting windows. Keep nominal, perturbation
+and teacher branches together; preserve held-out scene seeds and reviewed
+prompt families. Window counts and repeated sampler exposure do not add
+independent episodes.
 
-A dataset contains `manifest.json`, `train.npz`, `val.npz`, `test.npz` and
-conversion/audit reports. The manifest pins schema, source parents, split
-assignment, evidence and window hashes. NPZ files hold model inputs,
-supervision targets, availability masks and provenance identifiers.
+The canonical teacher pairs a saved clean ARDY reference with a perturbed
+nominal branch under the same SONIC, fingers and physics. A pre-divergence
+activation fingerprint binds physical state, controller history, reference
+buffers and limiter state. Recovery supervision requires matching activation
+state, actual branch execution, clean task success and perturbed task failure.
+Both-success pairs do not supply recovery targets; failed clean branches do
+not supply corrective demonstrations. This controlled corruption workflow
+does not establish recovery from an arbitrary already-diverged failure.
 
-Declare splits **before window extraction**. Keep every original episode and
-its nominal, counterfactual and clean teacher branches in the same split.
-Hold out scene seeds and reviewed prompt paraphrase families. Effective text
-comparison catches identical instructions under renamed groups; it cannot
-prove semantic independence, so paraphrase grouping still needs review.
-Source-entry and window counts must not be reported as independent episodes.
+The correction target is the recorded teacher-minus-nominal arm reference.
+Stable nominal samples have an identity target of zero, and correction and
+identity sets are disjoint. Preserve recorded targets and availability masks.
+The loss compares predictions with `offset_target` without clipping or
+normalizing the target. The canonical `WindowDataset` requires available
+correction targets to satisfy its declared magnitude, arm mask and identity
+contract and rejects violations. A raw native dataset with another target
+scale needs its own declared loader/architecture contract; silently clipping
+its labels changes the learning problem.
 
-The final dataset preserves older dense-velocity rollout sources and current
-sparse-velocity sources with their cohort provenance. Calibration used
-train-only stable episodes with the current controls. This mixed cohort and
-its narrower no-walk task distribution must be reported; do not relabel old
-control/replay results as current matched B0/P trials.
-
-## Prepare a fresh collection
-
-Run data modules through the supported container from the host:
+Plan and index a collection through the supported host container:
 
 ```bash
 MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh \
   python -m experiments.plan_data plan \
   --config configs/data/collection.json --out output/data-collection-new
-```
 
-The configuration fixes six English prompt groups and 200 parent episodes:
-120 train, 40 validation and 40 test. It uses ARDY, no walking, .20 m standoff
-and 10 s hold. Review/pilot the prompt groups before launching a large batch.
-The planner writes immutable batch plans and `commands.txt`; planning itself
-runs no physics. Execute the saved batch commands, which use `--resume` with
-no overrides. Create a fresh plan after source changes; do not edit old locks,
-move completed parents between splits or retry completed failures until success.
-
-Index the completed plans:
-
-```bash
 MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh \
   python -m experiments.plan_data index \
   --collection output/data-collection-new/collection-plan.json \
   --out output/data-index-new
-```
 
-The index verifies exact seeds, instructions and evidence. It reports pending,
-too-short, malformed and invalid attempts. Complete physical task failures with
-sufficient history remain Risk candidates. Success only marks an episode as a
-teacher candidate; it does not create a correction target.
-
-## Collect verified teacher pairs
-
-The supported teacher uses the **clean frozen ARDY reference** from a completed
-source. A nominal branch introduces a bounded arm perturbation; a clean branch
-replays the same saved references through SONIC and the shared hand/physics
-system. Both full episodes begin from the same reset. An activation fingerprint
-checks physical state, SONIC history, buffers and correction limiter immediately
-before perturbation.
-
-```bash
 MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh \
   python -m experiments.collect_pairs \
   --sources output/data-index-new/sources.json \
   --out output/teacher-pairs-new --limit 3
-
-MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh \
-  python -m experiments.collect_pairs \
-  --sources output/data-index-new/sources.json \
-  --out output/teacher-pairs-new --resume --limit 20
 ```
 
-The default perturbation plan proposes bounded right-shoulder offsets in lower
-and a right-elbow offset in lift. A lock prevents concurrent queue writers.
-Resume verifies unchanged sources, references, perturbations and collector
-hashes. Completed failed/rejected candidates remain recorded.
+Planning runs no physics. Execute the saved immutable commands with their
+recorded source/configuration contract. A resumed collection checks those
+pins. Completed failures, invalid reference replays and rejected candidates
+remain recorded; unavailable replans cannot be invented to create recoveries.
 
-A usable recovery requires matching activation fingerprints, actual SONIC and
-physics execution, clean branch task success and perturbed branch task failure.
-At the verified activation, the correction target is clean minus perturbed
-arm reference. Both-success pairs supply no recovery target. Failed clean
-branches supply no Residual correction. Successful clean nominal futures may
-supply zero-offset identity samples, under the same original-parent split.
+Freeze train-only label calibration before conversion. Pass the four tracking
+thresholds explicitly in left-arm, right-arm, torso and lower-body order.
+Do not tune labels on validation/test or change them to force class balance.
+Convert into a fresh dataset directory and run its audit before training.
+Risk readiness requires observed positive and negative labels; Residual also
+requires verified correction and stable identity samples in train/validation.
+Readiness establishes availability, not adequate data coverage.
 
-This is controlled corruption supervision at a matched pre-divergence state.
-It does not restore an arbitrary mid-episode state or demonstrate recovery from
-an already-diverged natural failure. Feedback-driven nominal replay may ask
-for a saved replan that does not exist; such execution is invalid and excluded.
-Do not invent the missing reference or call the invalid branch a verified
-recovery. Missing references produce nonrandom replay censoring, so report
-attempted, valid, rejected and independent recovery-parent counts separately.
+## Staged training and checkpoint selection
 
-## Calibrate labels, convert and audit
-
-Diagnose continuous execution signals on train/validation without modifying
-rollouts. The label calibrator uses train per-original-episode maximum-horizon
-tracking p95, then across-episode p95, rounded upward to .01 rad and never below
-existing floors. Require at least ten independent stable train episodes with
-current controls. Freeze this exploratory artifact before conversion and
-check the unchanged validation physical stable-hold guard. Do not adjust
-thresholds to force class balance or choose them on validation/test.
-
-The current frozen candidate is `[.14, .15, .10, .13]` rad in left-arm,
-right-arm, torso, lower-body order. After freezing a source plan and candidate, convert into fresh output paths.
-The example below uses the present candidate and placeholder source paths:
-
-```bash
-MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh \
-  python -m experiments.build_dataset \
-  --sources output/teacher-pairs-new/sources.json --out output/dataset-new \
-  --tracking-thresholds .14 .15 .10 .13 --skip-ineligible --require residual
-
-MUSA_IMAGE=dl-musa-render:latest ./docker/run-musa.sh \
-  python -m experiments.audit_dataset --data output/dataset-new/manifest.json \
-  --require residual --out output/dataset-audit-new.json
-```
-
-These conversion and supervision-availability commands do not run the physical
-stable-hold label guard. Verify that guard separately before quality-gated training.
-
-For a new collection, repeat train-only calibration and preserve its artifact;
-these numerical values are not a universal label setting. `--inspect-only`
-inspects windows before writing a dataset. `--skip-ineligible` reports short
-or windowless sources; malformed streams or changed pair evidence still fail.
-Conversion does not run physics.
-
-Risk readiness requires observed positives and negatives in train/validation.
-Residual readiness also requires verified corrections and stable identity
-samples in both. Availability alone does not establish adequate data size.
-A new manifest invalidates prior model/gate compatibility and requires
-retraining before supervised Residual training.
-
-## Train Risk, freeze, then train Residual
-
-Inside `./run.sh shell`, with a fresh verified dataset:
+Inside `./run.sh shell`, use a fresh audited dataset and fresh output paths:
 
 ```bash
 python -m experiments.train --stage risk --device musa:0 --seed 0 \
@@ -218,41 +132,70 @@ python -m experiments.evaluate_risk --device musa:0 --split test \
   --calibration output/eval-val-new/gate.json --out output/eval-test-new
 ```
 
-Risk uses natural sampling and early stopping on validation total loss with a
-30-epoch maximum in `risk-quality-pilot.json`. Record actual epochs, best epoch
-and stop reason; the budget is not the completed epoch count. Residual uses
-supervised correction MSE plus zero-offset identity and temporal smoothness,
-with explicit balanced sampling of correction/identity supervision. Risk is
-frozen and supplies predicted tokens throughout Residual training.
+Residual training verifies the Risk configuration, manifest and window hashes,
+sets Risk to evaluation mode with gradients disabled, and computes predicted
+features under `no_grad`. P uses the complete learned body/time tokens. The
+Residual projects these features into the future nominal tokens of its
+Temporal Transformer; this is additive conditioning, not a separate
+cross-attention decoder. Training optimizes bounded predictions before runtime
+gating, using correction, zero-offset identity and temporal smoothness losses.
 
-For separate seeds on idle physical GPUs, run from the host:
+Only history and nominal continuous inputs use fitted normalization. Fit it
+on the full natural training inputs, preserve categorical/binary encoding and
+context units, and store the tensors inside each checkpoint. Residual reuses
+the frozen Risk normalizer. A runtime bundle must match its baseline lock,
+schema, dataset, Risk hash, normalizer and gate calibration; a label-audit
+certificate is a separate artifact from a deployment gate.
 
-```bash
-bash scripts/train_risk_multiseed.sh 2,3 output/dataset-new/manifest.json \
-  configs/learning/risk-quality-pilot.json output/risk-multiseed-new
-```
+Select checkpoints by the declared full validation objective. `budget_epochs`
+is a cap, `actual_epochs` records completed work, and `best_epoch` identifies
+`best.pt`. Record actual updates, stopping reason, learning rates and component
+losses. Validation-only schedulers and early stopping change the completed
+budget; they do not change the objective. Test data is reserved for final
+reporting.
 
-This launches independent models, not DDP. Select a Risk seed by minimum best
-**validation** total loss. The gate selects maximum validation F1 on a .01
-probability grid, ties favoring fewer activations then higher threshold. Keep
-raw sigmoid, the selected threshold, checkpoint, train normalizer and manifest
-hashes frozen for test/physical evaluation. Test data is used only for final
-reporting. Optional probability scaling, sampling changes or dropout experiments
-are separate ablations.
+## Sampling and interface controls
 
-## Online integration and remaining research
+Risk defaults to natural sampling. Optional `balanced_intervention` changes
+valid positive/negative exposure. Optional `verified_recovery` assigns a
+declared recovery mass equally across original origins, then equally across
+each origin's windows; the background retains the declared remaining mass.
+These options preserve labels, auxiliary masks, the natural training
+normalizer and full validation windows. Censored samples retain their stated
+supervision scope. Record sampling mode, draw budget, group mass and expected
+repeats; expectations are not realized draws or new independent recoveries.
 
-The original batch/manual workflow loads the matched Risk/Residual/gate set
-with `--ardy`; see [commands](commands.md#load-the-trained-p-controller).
-Risk/Residual updates at 10–20 Hz. Low risk skips Residual inference and requests
-zero offset; the shared limiter ramps existing correction back to zero.
-Offsets are limited to .15 rad, use the 14-arm mask and the shared .5 rad/s
-rate limit. Checks recompute velocities and preserve nominal non-arm fields.
-Record gate decisions, latency, history gaps and desired/applied corrections.
+Residual samples the disjoint correction and identity sets with the configured
+mass and replacement. `training.residual_samples_per_epoch`, when supplied,
+sets its draw count. Validation uses all eligible correction/identity windows
+without resampling. A lower draw budget changes optimizer exposure and compute;
+it is not additional data or an equal-compute comparison.
 
-The proposal's B1/B2/I1/I2/I3/I4 controls, risk-interface and loss/component
-ablations remain a separate evaluation budget. Available interfaces are not
-completed comparison results. Joint fine-tuning, real hardware, camera
-perception, general natural-failure teacher recovery and geometric clearance
-prediction remain outside the verified implementation. Current closed-loop
-P has not improved aggregate matched grasp success.
+Risk-interface adapters preserve the same body/time feature slots and decoder
+capacity. Binary-gate, scalar, body-wise, time-wise and learned-token interfaces
+need matched training/data/gate protocols before their outcomes are compared.
+The no-gate control reuses the trained networks without retraining. Available
+source interfaces are not completed ablation results.
+
+## Runtime and portability
+
+The canonical runtime updates Risk/Residual at 10–20 Hz against shared 50 Hz
+SONIC references. Only the current correction sample is committed; the next
+cycle observes the new robot state. Low risk skips Residual inference and
+requests zero offset. The shared limiter brings any existing offset back to
+zero while respecting arm-only authority, joint limits, magnitude and rate.
+Canonical defaults are 0.15 rad magnitude and 0.5 rad/s offset rate; checkpoint
+and runtime settings must remain bound to their declared configuration.
+Velocities and dependent reference fields are recomputed after correction.
+
+Native sidecar checkpoints may use distinct encoder pooling, heads, output
+bounds or raw-target schemas. Preserve the matching source and adapter rather
+than converting keys or copying metadata to force canonical compatibility.
+A passing shape or primitive operator check does not establish compatibility
+of a full motion generator, SONIC or a learned controller on MUSA.
+
+See [commands](commands.md#load-the-trained-p-controller) for host execution
+and [verification](verification.md) for evidence accounting. Record gate
+activation, input/inference latency, history gaps and desired/applied offsets
+in the ignored run artifacts. General natural-failure recovery, joint
+fine-tuning, perception and hardware deployment remain separate work.

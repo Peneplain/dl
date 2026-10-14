@@ -109,6 +109,44 @@ class RiskEvaluationTests(unittest.TestCase):
         self.assertEqual(result["direct_recovery_only"]["raw_gate"]["risk_recall"], 1.)
         self.assertEqual(result["by_phase"]["hold"]["current_proxy_negative_future_onset"]["raw_gate"]["available"], 0)
 
+    def test_independent_onset_inference_aligns_every_window_across_multiple_batches(self):
+        torch.set_num_threads(1)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = ModelConfig(width=16, layers=1, heads=4, dropout=0)
+            manifest = make_fixture(root / "data", config, count=5)
+            data = WindowDataset(manifest, "train", config)
+            model = RiskModel(config, independent_future_onset=True)
+            # Distinct constant scores prove that the original runtime probability
+            # is preserved and the auxiliary head is collected only once/window.
+            with torch.no_grad():
+                model.intervention.weight.zero_()
+                model.intervention.bias.fill_(2.)
+                model.future_onset.weight.zero_()
+                model.future_onset.bias.fill_(-2.)
+            checkpoint = root / "risk-independent.pt"
+            torch.save({"schema": SCHEMA, "kind": "risk", "baseline_lock_sha256": sha256(LOCK),
+                        "model_config": config.to_dict(), "model": model.state_dict(),
+                        "risk_options": {"independent_future_onset": True},
+                        "normalizer": Normalizer.fit(data).state_dict(), "epoch": 1, "seed": 0,
+                        "synthetic_inputs": True, "dataset_manifest_sha256": sha256(manifest),
+                        "window_hashes": {"val": sha256(root / "data/val.npz")}}, checkpoint)
+            # Three batches include a final singleton: a dynamic collection-key
+            # loop previously duplicated onset rows after the first batch.
+            small, _ = infer_checkpoint(checkpoint, manifest, allow_synthetic=True, batch_size=2)
+            single, _ = infer_checkpoint(checkpoint, manifest, allow_synthetic=True, batch_size=5)
+            self.assertEqual(small["future_onset_logit"].shape, (5,))
+            self.assertEqual(small["future_onset_probability"].shape, (5,))
+            for key in ("intervention_logit", "probability", "future_onset_logit",
+                        "future_onset_probability", "tracking", "contact_logits", "balance_logits"):
+                self.assertEqual(len(small[key]), len(small["intervention_target"]))
+                np.testing.assert_allclose(small[key], single[key], rtol=1e-5, atol=1e-6)
+            self.assertTrue(np.all(small["probability"] > .8))
+            self.assertTrue(np.all(small["future_onset_probability"] < .2))
+            report = evaluate_arrays(small, threshold=.6, bootstrap=0)
+            self.assertEqual(report["predictive_onset"]["score_source"], "independent_future_onset_head")
+            self.assertEqual(report["intervention"]["available"], 5)
+
     def test_strict_checkpoint_predictions_and_window_hash(self):
         torch.set_num_threads(1)
         with tempfile.TemporaryDirectory() as temporary:

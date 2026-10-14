@@ -14,7 +14,7 @@ import sys
 from baseline.common import sha256, write_json
 from baseline.execution import ExecutionRuntime
 from baseline.session import make_plan
-from risk_residual.teacher import ScheduledArmOffset
+from risk_residual.teacher import PAIR_PHASES, ScheduledArmOffset
 from scripts.run import config_for, parse_args
 
 
@@ -132,7 +132,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--phase", choices=("reach", "lower", "lift"), default="lower")
+    parser.add_argument("--phase", choices=PAIR_PHASES, default="lower")
     parser.add_argument("--delay", type=float, default=.2)
     parser.add_argument("--joint", default="right_wrist_pitch_joint")
     parser.add_argument("--amplitude", type=float, default=.1)

@@ -1,0 +1,36 @@
+{
+  "model": {
+    "body_groups": 4,
+    "dropout": 0.1,
+    "heads": 8,
+    "history_steps": 16,
+    "horizon": 8,
+    "layers": 4,
+    "max_offset": 0.15,
+    "token_dim": 32,
+    "width": 256
+  },
+  "risk_options": {
+    "no_future": false,
+    "no_history": false
+  },
+  "status": "Exploratory single-factor Risk sampling strategy: assign 5% replacement-sampling mass to existing physically verified recovery windows, uniformly over original scene/prompt clusters then their windows; the remaining 95% is natural sampling over all non-correction windows including censored windows with available auxiliary supervision. Keep all original model, loss, optimizer, train-fitted natural-window normalizer and early-stop defaults. Seeds 0 and 1, maximum 30 epochs. Sampling changes exposure, not labels or independent data; no evidence of physical task improvement or permission to promote runtime checkpoints.",
+  "training": {
+    "alpha": 1.0,
+    "auxiliary_weight": 1.0,
+    "batch_size": 64,
+    "beta": 0.1,
+    "correction_fraction": 0.5,
+    "early_stopping": {
+      "min_delta": 0.0,
+      "monitor": "val_loss",
+      "patience": 5
+    },
+    "epochs": 30,
+    "gradient_clip": 1.0,
+    "learning_rate": 0.0001,
+    "risk_recovery_fraction": 0.05,
+    "risk_sampling": "verified_recovery",
+    "weight_decay": 0.01
+  }
+}

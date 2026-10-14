@@ -1,6 +1,7 @@
 """Proposal Risk/Residual Transformers with matched body/time conditioning slots."""
 
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 from torch import nn
@@ -17,6 +18,7 @@ class RiskOutput:
     contact_logits: torch.Tensor       # [N,8,4], supervised only for closed hands
     balance_logits: torch.Tensor       # [N,8,4]
     intervention_logit: torch.Tensor   # [N]
+    future_onset_logit: Optional[torch.Tensor] = None  # [N], independent predictive head when enabled
 
     @property
     def probability(self):
@@ -96,16 +98,20 @@ class TemporalBackbone(nn.Module):
 
 
 class RiskModel(nn.Module):
-    def __init__(self, config=None, *, no_future=False, no_history=False):
+    def __init__(self, config=None, *, no_future=False, no_history=False,
+                 independent_future_onset=False):
         super().__init__()
         self.config = config or ModelConfig()
         self.no_future, self.no_history = no_future, no_history
+        self.independent_future_onset = bool(independent_future_onset)
         self.backbone = TemporalBackbone(self.config)
         self.tokens = nn.Linear(self.config.width, self.config.token_dim)
         self.track = nn.Sequential(nn.Linear(self.config.token_dim, 1), nn.Softplus())
         self.contact = nn.Linear(self.config.token_dim, 1)
         self.balance = nn.Linear(self.config.token_dim, 1)
         self.intervention = nn.Linear(self.config.token_dim, 1)
+        if self.independent_future_onset:
+            self.future_onset = nn.Linear(self.config.token_dim, 1)
 
     def forward(self, history, nominal, context):
         if self.no_history:
@@ -113,9 +119,12 @@ class RiskModel(nn.Module):
         if self.no_future:
             nominal = torch.zeros_like(nominal)
         z = self.tokens(self.backbone(history, nominal, context))
+        pooled = z.mean((1, 2))
+        future_onset = (self.future_onset(pooled).squeeze(-1)
+                        if self.independent_future_onset else None)
         return RiskOutput(z, self.track(z).squeeze(-1), self.contact(z).squeeze(-1),
                           self.balance(z).squeeze(-1),
-                          self.intervention(z.mean((1, 2))).squeeze(-1))
+                          self.intervention(pooled).squeeze(-1), future_onset)
 
 
 def risk_features(output, interface):

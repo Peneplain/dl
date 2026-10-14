@@ -1,0 +1,36 @@
+{
+  "model": {
+    "history_steps": 16,
+    "horizon": 8,
+    "body_groups": 4,
+    "token_dim": 32,
+    "width": 256,
+    "layers": 4,
+    "heads": 8,
+    "dropout": 0.1,
+    "max_offset": 0.15
+  },
+  "risk_options": {
+    "no_future": false,
+    "no_history": false
+  },
+  "training": {
+    "epochs": 30,
+    "batch_size": 64,
+    "learning_rate": 0.0001,
+    "weight_decay": 0.01,
+    "gradient_clip": 1.0,
+    "correction_fraction": 0.5,
+    "alpha": 1.0,
+    "beta": 0.1,
+    "auxiliary_weight": 1.0,
+    "risk_sampling": "verified_recovery",
+    "risk_recovery_fraction": 0.05,
+    "early_stopping": {
+      "patience": 8,
+      "min_delta": 0.0,
+      "monitor": "val_loss"
+    }
+  },
+  "status": "Exploratory Risk control: verified-recovery sampling with patience 8 and fixed learning rate. Same frozen dataset and model as prior pilot; train/validation only for selection; no runtime promotion."
+}

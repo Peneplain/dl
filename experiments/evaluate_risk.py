@@ -199,17 +199,29 @@ def infer_checkpoint(risk_path, manifest_path, *, device="cpu", split="val", bat
     validation_hash = sha256(validation_path)
     if meta["window_hashes"]["val"] != validation_hash:
         raise ValueError("Validation windows changed since risk training")
-    collected = {key: [] for key in ("intervention_logit", "probability", "tracking", "contact_logits", "balance_logits")}
+    prediction_fields = ("intervention_logit", "probability", "tracking", "contact_logits", "balance_logits")
+    collected = {key: [] for key in prediction_fields}
+    has_future_onset_head = False
     with torch.inference_mode():
         for batch in DataLoader(data, batch_size=batch_size, shuffle=False, num_workers=0):
             inputs = {key: value.to(device) for key, value in batch.items()}
             output = model(**normalizer(inputs))
-            for key in collected:
+            for key in prediction_fields:
                 value = getattr(output, key).cpu().numpy()
                 if not np.isfinite(value).all():
                     raise FloatingPointError("Nonfinite model prediction: " + key)
                 collected[key].append(value)
+            if output.future_onset_logit is not None:
+                has_future_onset_head = True
+                value = output.future_onset_logit.cpu().numpy()
+                if not np.isfinite(value).all():
+                    raise FloatingPointError("Nonfinite model prediction: future_onset_logit")
+                # Keep optional heads outside the fixed-field loop: mutating
+                # its collection keys used to append later batches twice.
+                collected.setdefault("future_onset_logit", []).append(value)
     predictions = {key: np.concatenate(value) for key, value in collected.items()}
+    if has_future_onset_head:
+        predictions["future_onset_probability"] = sigmoid(predictions["future_onset_logit"])
     for key in ("parent_id", "decision_time", "intervention_valid", "intervention_target", "future_valid",
                 "contact_mask", "track_target", "contact_target", "balance_target", "correction_sample"):
         predictions[key] = data.arrays[key]
@@ -264,7 +276,8 @@ def future_onset_metrics(a, *, threshold):
     recovery = np.asarray(a["correction_sample"], dtype=bool)
     intervention_valid = np.asarray(a["intervention_valid"], dtype=bool)
     labels = a["intervention_target"]
-    p = a.get("probability", sigmoid(a["intervention_logit"]))
+    intervention_p = a.get("probability", sigmoid(a["intervention_logit"]))
+    onset_p = a.get("future_onset_probability", intervention_p)
     # A reactive positive is established even if another body is unavailable;
     # an observed reactive negative requires all current bodies to be available.
     reactive_available = intervention_valid & (current | current_complete)
@@ -272,8 +285,8 @@ def future_onset_metrics(a, *, threshold):
     onset_valid = onset_eligible & (future | complete_future)
     direct_only = recovery & ~proxy_any
 
-    def compare(mask, target):
-        return {"raw_gate": binary_metrics(p, target, threshold=threshold, mask=mask),
+    def compare(mask, target, scores):
+        return {"raw_gate": binary_metrics(scores, target, threshold=threshold, mask=mask),
                 "current_proxy_reactive": binary_metrics(current.astype(float), target,
                                                           threshold=.5, mask=mask)}
 
@@ -292,10 +305,12 @@ def future_onset_metrics(a, *, threshold):
         if key in a:
             counts["future_onset_" + key + "_count"] = len(np.unique(a[key][onset_valid]))
     result = {"counts": counts,
-              "all_observed_intervention": compare(reactive_available, labels),
-              "current_proxy_negative_future_onset": compare(onset_valid, future),
-              "verified_recovery": compare(intervention_valid & recovery, labels),
-              "direct_recovery_only": compare(intervention_valid & direct_only, labels),
+              "score_source": ("independent_future_onset_head" if "future_onset_probability" in a
+                              else "intervention_head"),
+              "all_observed_intervention": compare(reactive_available, labels, intervention_p),
+              "current_proxy_negative_future_onset": compare(onset_valid, future, onset_p),
+              "verified_recovery": compare(intervention_valid & recovery, labels, intervention_p),
+              "direct_recovery_only": compare(intervention_valid & direct_only, labels, intervention_p),
               "by_phase": {},
               "definition": "Current proxy uses h=0 nominal tracking/contact/balance violations; future onset uses h>0.",
               "selection": "Use the same frozen raw gate threshold; no subset threshold fitting.",
@@ -303,10 +318,10 @@ def future_onset_metrics(a, *, threshold):
     for index, phase in enumerate(PHASES):
         phase_mask = a["phase_index"] == index
         result["by_phase"][phase] = {
-            "all_observed_intervention": compare(reactive_available & phase_mask, labels),
-            "current_proxy_negative_future_onset": compare(onset_valid & phase_mask, future),
-            "verified_recovery": compare(intervention_valid & recovery & phase_mask, labels),
-            "direct_recovery_only": compare(intervention_valid & direct_only & phase_mask, labels)}
+            "all_observed_intervention": compare(reactive_available & phase_mask, labels, intervention_p),
+            "current_proxy_negative_future_onset": compare(onset_valid & phase_mask, future, onset_p),
+            "verified_recovery": compare(intervention_valid & recovery & phase_mask, labels, intervention_p),
+            "direct_recovery_only": compare(intervention_valid & direct_only & phase_mask, labels, intervention_p)}
     return result
 
 

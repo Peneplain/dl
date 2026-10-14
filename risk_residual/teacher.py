@@ -13,6 +13,9 @@ import numpy as np
 from baseline.adapters.joints import ARM_INDICES, ISAACLAB_JOINT_NAMES
 
 
+PAIR_PHASES = ("reach", "lower", "lift", "hold")
+
+
 def activation_fingerprint(simulation, reference):
     """Hash physical and controller state immediately before the first offset."""
     digest = hashlib.sha256()
@@ -56,10 +59,14 @@ def activation_fingerprint(simulation, reference):
 
 
 class ScheduledArmOffset:
-    """Perturb only one arm joint after a phase-local delay; clean mode stays zero."""
+    """Perturb one arm joint after a phase-local delay; clean mode stays zero.
+
+    Hold uses the shared executor's existing terminal reference. This schedule
+    neither generates motion nor changes the clean/nominal evidence gates.
+    """
 
     def __init__(self, *, phase, delay, joint, amplitude, perturb):
-        if (phase not in {"reach", "lower", "lift"} or joint not in ISAACLAB_JOINT_NAMES
+        if (phase not in PAIR_PHASES or joint not in ISAACLAB_JOINT_NAMES
                 or ISAACLAB_JOINT_NAMES.index(joint) not in ARM_INDICES
                 or not np.isfinite(delay) or delay < 0
                 or not np.isfinite(amplitude) or not 0 < abs(amplitude) <= .15):

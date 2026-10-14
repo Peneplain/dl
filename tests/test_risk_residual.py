@@ -91,6 +91,17 @@ class LearningTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'disjoint'):
             residual_loss(prediction, self.batch)
 
+    def test_independent_future_onset_head_is_optional_and_separate(self):
+        legacy = RiskModel(self.config)
+        refined = RiskModel(self.config, independent_future_onset=True)
+        with torch.no_grad():
+            legacy_out = legacy(**self.inputs)
+            refined_out = refined(**self.inputs)
+        self.assertIsNone(legacy_out.future_onset_logit)
+        self.assertIsNotNone(refined_out.future_onset_logit)
+        self.assertEqual(tuple(refined_out.future_onset_logit.shape), (self.inputs["history"].shape[0],))
+        self.assertFalse(refined_out.future_onset_logit.data_ptr() == refined_out.intervention_logit.data_ptr())
+
     def test_low_risk_skips_residual_inference(self):
         risk, residual = RiskModel(self.config), ResidualModel(self.config)
         with torch.no_grad():

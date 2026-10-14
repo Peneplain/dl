@@ -1,78 +1,58 @@
 # Current Project Context
 
-Read this page, inspect Git status and then read task-relevant source/artifacts
-before starting work. Keep this a concise description of the current system;
-per-run progress and immutable diagnostics belong in output artifacts.
+Read this page, inspect Git status and then read task-relevant source and
+artifacts. Keep this summary about current capabilities and constraints;
+per-run results and diagnostics belong in ignored output artifacts.
 
-## Canonical workspace
+## Workspace and entry points
 
 - Server repository: `/home/group3/dl` on the S4000 worker.
-- Generated artifacts: repository `output/`, resolving to
-  `/data/group3/dl-output/` on the larger storage volume.
-- Supported entry point: `./run.sh` from the host with the existing vendor
-  MUSA stack and `.venv-baseline-musa`.
-- Keep weights, rollout data, videos, upstream source trees and credentials
-  outside Git. Preserve measured evidence before any cleanup.
+- Generated artifacts: `output/`, resolving to `/data/group3/dl-output/`.
+- Host entry point: `./run.sh`, with the matched vendor MUSA environment.
+- Keep model assets, upstream checkouts, rollouts, videos and credentials out
+  of Git. Preserve original manifests and measured evidence.
 
 ## Implemented system
 
-`--ardy` and `--kimodo` select distinct frozen motion generators. The shared
-executor provides simulator-state grounding, phased English prompts, named
-G1 references, SONIC, articulated fingers, free-root MuJoCo physics, recording,
-rendering and the evaluator. ARDY remains the default for old commands/plans.
+Frozen ARDY is the default generator; `--ardy` and `--kimodo` select distinct
+frozen models. Both use simulator-state task grounding, phased English goals,
+named G1 references, shared checks, frozen SONIC, articulated fingers and
+free-root MuJoCo physics with a dynamic block.
 
-B0 is nominal ARDY–SONIC; P adds the trained Predictive Risk and arm-only
-Residual controller through the same batch/manual entry. Kimodo K0 is an
-additional frozen generator comparator. P currently supports ARDY only and
-requires a matched Risk, supervised Residual and validation gate. B0 does not
-require learned artifacts.
+B0 is nominal ARDY + SONIC. P adds Predictive Risk and arm-only Residual
+correction through the shared executor. Risk reads measured history, future
+nominal references and causal phase/finger context; it produces body/time
+features and an intervention score. Residual uses predicted Risk features and
+modifies only the arm reference. Low risk skips Residual inference, requests
+zero offset and returns any existing correction to zero under the shared rate
+limit. SONIC continues to execute lower-body and nominal whole-body motion.
 
-The current study is simulation-only and uses privileged object state.
-Camera perception, GR00T N1.7 integration, hardware deployment, general
-natural-failure teacher recovery and joint fine-tuning are not implemented.
-`docs/proposal.tex` stays frozen; document implementation and experimental
-limits in the other pages.
+The learning package supports masked nominal-future Risk supervision,
+controlled same-state teacher pairs, stable identity targets and supervised
+Residual training with frozen Risk. Checkpoints embed training-input
+normalizers and bind dataset, schema, source and Risk provenance. The canonical
+loader rejects incompatible bundles; native sidecar artifacts also require
+their exact architecture and adapter source.
 
-## Current trained artifacts
+## Scope and evidence constraints
 
-All paths below are under `output/`:
+The implemented task is simulated right-hand tabletop block grasp/lift with
+privileged object grounding. GR00T integration, camera perception, bimanual
+transport, hardware deployment, arbitrary natural-failure teacher recovery and
+joint fine-tuning are outside the current implementation. The approved
+`docs/proposal.tex` remains frozen.
 
-```text
-risk-quality-final-261007f/dataset/manifest.json
-risk-quality-retrain-261007f/risk/seed-0/best.pt
-risk-quality-retrain-261007f/residual/best.pt
-risk-quality-retrain-261007f/eval-val/gate.json
-risk-quality-retrain-261007f/final-label-gate.json
-```
+Keep related branches under their original parent split. Preserve raw recorded
+targets, unavailable-label masks, normalizer provenance, frozen gate decisions,
+shared limits and task criteria. The teacher supplies training supervision and
+must not participate in evaluation. Distinguish nominal anchor rejections,
+attempted-arm operational failures and completed physical outcomes.
 
-The runtime gate is `eval-val/gate.json` at 0.31; `final-label-gate.json` is a
-separate label/data audit certificate. Selected checkpoints and the manifest
-must retain their recorded hashes. [Verification](verification.md) lists exact
-hashes, actual training epochs, offline metrics and physical trial results.
+Reusable risk interfaces and no-gate controls exist, but source availability
+is not evidence of a completed fair ablation. Remaining course work includes a
+matched ARDY/Kimodo comparison, timing and correction metrics, representative
+videos, Archon workflow evidence and report/demo publication. Per-run training
+losses and task rates remain in their immutable artifact records.
 
-The final dataset has 82,060/29,248/29,497 train/validation/test windows and
-30/9/13 correction samples. Related branches are not independent original
-parents. Risk seeds 0 and 1 completed, seed 0 was selected on validation,
-and supervised P Residual training with frozen Risk completed.
-
-The original batch integration executed actual SONIC/physics and nonzero
-bounded corrections. The retained 60-pair repeat achieved 23/60 for both B0
-and P, so no aggregate grasp-success improvement is established. The tuned
-Kimodo 20-trial result is 11/20 and is not a matched held-out comparison.
-
-## Working invariants and next research
-
-Keep ARDY, Kimodo and SONIC sources/assets frozen. Preserve English project
-content, named mappings, causal history/lookahead, original-parent split
-ownership, missing-label masks and model/gate/data provenance. Invalid replay
-execution must remain excluded, and all valid physical failures/timeouts remain
-in the evaluation denominator. Do not relax success criteria or select only
-favorable seed groups.
-
-Next useful work is to diagnose the discordant B0/P trials and increase
-independent recovery supervision before testing a predeclared validation
-change. The proposal's controls, multi-trained-seed/perturbation budget and
-ablations remain incomplete. For the course submission, also finish a fair
-ARDY/Kimodo comparison, representative videos, Archon workflow evidence and
-the report/demo. Use [commands](commands.md), [learning](learning.md) and
-[requirements](track4_requirements.md) as the operational references.
+Use [commands](commands.md), [learning](learning.md), [verification](verification.md)
+and [requirements](track4_requirements.md) for the relevant workflow.

@@ -1,0 +1,36 @@
+{
+  "model": {
+    "history_steps": 16,
+    "horizon": 8,
+    "body_groups": 4,
+    "token_dim": 32,
+    "width": 256,
+    "layers": 4,
+    "heads": 8,
+    "dropout": 0.1,
+    "max_offset": 0.15
+  },
+  "risk_options": {
+    "no_future": false,
+    "no_history": false
+  },
+  "training": {
+    "epochs": 30,
+    "batch_size": 64,
+    "learning_rate": 0.0001,
+    "weight_decay": 0.01,
+    "gradient_clip": 1.0,
+    "correction_fraction": 0.5,
+    "alpha": 1.0,
+    "beta": 0.1,
+    "auxiliary_weight": 2.0,
+    "risk_sampling": "natural",
+    "early_stopping": {
+      "patience": 8,
+      "min_delta": 0.0,
+      "monitor": "val_loss"
+    },
+    "future_onset_weight": 1.0
+  },
+  "status": "Exploratory future-onset auxiliary-loss Risk ablation: frozen architecture, natural sampling, future-onset weight 1.0."
+}
