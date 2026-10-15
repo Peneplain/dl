@@ -1,0 +1,32 @@
+We evaluate both frozen generators on the same 100 scene requests (seeds 60000--60099), with common stage instructions, block positions, SONIC settings, finger gains, and automatic alignment replans. Each adapter retains its calibrated wrist convention. All scheduled attempts are included, with zero additional user corrections.
+
+\begin{table}[t]
+\centering
+\caption{Generator comparison}
+\label{tab:generators}
+\begin{tabular}{lrr}
+\toprule
+ & ARDY+SONIC & Kimodo+SONIC\\
+\midrule
+Successful grasps & 40/100 & 55/100\\
+Initial threshold & 58/100 & 58/100\\
+Later sticky loss & 18/58 & 3/58\\
+Wilson 95\% interval & 30.94--49.80\% & 45.24--64.39\%\\
+Median initial response & 4.36\,s & 7.44\,s\\
+Mean initial response & 4.78\,s & 7.77\,s\\
+Mean joint RMSE & 0.0924\,rad & 0.0955\,rad\\
+User corrections/trial & 0 & 0\\
+\bottomrule
+\end{tabular}
+\end{table}
+Response is command-to-first-usable-reference wall time, including setup, and is separate from learned-controller timings.
+
+Kimodo achieves 55\% success versus ARDY's 40\%, an observed 15 percentage-point advantage (Table~\ref{tab:generators}). There are 23 shared successes, 28 shared failures, 32 Kimodo-only successes, and 17 ARDY-only successes. ARDY produces the first reference faster and attains slightly lower joint-tracking RMSE, while Kimodo converts more executions into retained grasps.
+
+\paragraph{Initial lifting versus sustained manipulation}
+The clearest distinction appears after the block first satisfies the task threshold. \emph{Each generator reaches the clearance-and-contact threshold in 58/100 trials}, but ARDY retains 40 of these grasps through final assessment, compared with 55 for Kimodo. The sticky loss flag records 18 later losses for ARDY and three for Kimodo: 31.0\% versus 5.2\% of threshold-reaching trials. Sixteen ARDY losses receive the terminal reason \texttt{grasp\_lost\_after\_success}; the other two terminate with prohibited contact. This distinguishes a convincing initial lift from sustained object control and explains why similar tracking accuracy can yield different task success.
+
+\paragraph{Motion locality and grasp geometry}
+In the selected videos, ARDY sometimes couples the right-hand action with broader body motion, while Kimodo's grasp adjustments appear more localized. Whole-body coupling can change wrist--object geometry during closing and holding. Both methods use the same finger-controller settings and SONIC stabilization; their generated wrist geometry and subsequent motion differ. This makes contact-compatible reference motion a useful complement to joint-tracking accuracy.
+
+Kimodo's dominant remaining bottleneck is alignment: 28 trials stop before acquisition, versus four acquisition failures, nine timeouts, and three post-threshold losses. ARDY has 17 acquisition failures and 18 timeouts in addition to its retention losses. The paired examples illustrate complementary strengths: Kimodo lifts while ARDY times out at seed 60000, but ARDY succeeds where Kimodo misses alignment at seed 60004. These results motivate adding execution-aware correction to the faster ARDY nominal chain, targeting contact and retention without replacing the generator.

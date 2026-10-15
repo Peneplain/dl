@@ -1,0 +1,96 @@
+{
+  "schema": "dl-public-report-source-manifest-v1",
+  "derivation": "New public views of existing authored-report evidence. Numeric results and native epoch rows are copied; trial identity/outcome/hash consistency is checked without re-running experiments or statistical analyses.",
+  "builder_sha256": "8521cd901b6cfa1280d6470d34fa96a487c8400ac9099757676beccbb324fbef",
+  "source_records": [
+    {
+      "source_id": "video_selection",
+      "role": "Authored selection and exact presentation-video hashes",
+      "source_bytes": 38225,
+      "source_sha256": "0a9219e538788e4fd6bec951b565a416e2adc979f2f41705fd8a0f04a9832e6c"
+    },
+    {
+      "source_id": "generator_summary",
+      "role": "Shared100-scene ARDY/Kimodo benchmark summaries",
+      "source_bytes": 84155,
+      "source_sha256": "607245f5c9f88821b78078982c08260d559f51ff13110eceed57ee589a3093bf"
+    },
+    {
+      "source_id": "generator_response_arrays",
+      "role": "Original100 response values per generator",
+      "source_bytes": 11936,
+      "source_sha256": "07232e43423830c1e6a5c5464274726bc919b442f6a452688844478add85e1ec"
+    },
+    {
+      "source_id": "generator_retention_funnel",
+      "role": "Original threshold, sticky-loss and retention flags per generator",
+      "source_bytes": 91665,
+      "source_sha256": "d10bdaf6e92a01591a769cd181f45049abb3ef8d58ad1b6fdc0b11b5520323bc"
+    },
+    {
+      "source_id": "controller_confirmation",
+      "role": "Selected-controller primary paired-origin analysis and all128 scheduled rows",
+      "source_bytes": 90070,
+      "source_sha256": "5f1a2ef6b4cb44ddde6d823f83fb4a04ccf04fa25a80c743e33a60bdc210fa82"
+    },
+    {
+      "source_id": "training_curve_capture",
+      "role": "Native metrics and training reports captured for the authored learning-curve figure",
+      "source_bytes": 1875112,
+      "source_sha256": "54dc9588b7b01108a27aa360fe839861b637fc26bb7cefc553c6fd22969c7165"
+    },
+    {
+      "source_id": "risk_training_report",
+      "role": "Selected risk training report",
+      "source_bytes": 334236,
+      "source_sha256": "0c2481808cba60ee3a3ea83676da49963b117b03e29840bfd210b0025923ee27"
+    },
+    {
+      "source_id": "risk_native_epoch_metrics",
+      "role": "Exact native full numeric risk epoch metrics",
+      "source_bytes": 21983,
+      "source_sha256": "b5d3bd33666f6f2fe6766e700f9ca2b55071ac10c9371f37d581a1429fa4a9ea",
+      "extracted_from_source_id": "training_curve_capture"
+    },
+    {
+      "source_id": "residual_training_report",
+      "role": "Selected residual training report",
+      "source_bytes": 1307993,
+      "source_sha256": "1db42f95fd8a0f22537b017e71adf389079f2f9088442279893ab63b72dc6dab"
+    },
+    {
+      "source_id": "residual_native_epoch_metrics",
+      "role": "Exact native full numeric residual epoch metrics",
+      "source_bytes": 75197,
+      "source_sha256": "7e17d1084e76269bbf0b6ec7fbc8999e1e69dce5c630fcb5a77c6d0d5341c643",
+      "extracted_from_source_id": "training_curve_capture"
+    },
+    {
+      "source_id": "invocation_ablation",
+      "role": "Descriptive same-weight selective/always-on invocation comparison",
+      "source_bytes": 74386,
+      "source_sha256": "2cc836cfd9cfb48a58baec5474bd5a7766a201d4311c885cc358522e15dd9540"
+    },
+    {
+      "source_id": "invocation_efficiency",
+      "role": "Recorded invocation counts and learned-controller latency summaries",
+      "source_bytes": 5928,
+      "source_sha256": "d0ebc683c39c2ac21ec61b367438f581a41de32b0b7a559fea8bb04eb4b7dee1"
+    }
+  ],
+  "published_result_sha256": "be3e1deb6b84e1956f07cfc425193b539404a93ce972092159a1cfad7f596ea4",
+  "published_video_manifest_sha256": "f74a4ea8a767977a2248307d3225f14f52bb65ac5ab12ecdd0f17a2421dcd340",
+  "coverage": {
+    "generator_origins_per_method": 100,
+    "generator_original_report_hashes": 200,
+    "controller_scheduled_origins": 128,
+    "invocation_scheduled_origins": 20,
+    "risk_epoch_rows": 19,
+    "residual_epoch_rows": 45,
+    "selected_videos": 22
+  },
+  "source_location_policy": "Source hashes bind original local evidence; only portable public fields and per-trial report hashes are included here.",
+  "new_physics_steps": 0,
+  "new_policy_calls": 0,
+  "new_training": false
+}

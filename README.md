@@ -11,6 +11,8 @@ state.
 
 ## Start here
 
+- [Course report and supplement](https://github.com/Peneplain/dl/tree/main/docs/report):
+  ICRA-format manuscript, numerical results, and 22 annotated demonstration videos.
 - [Commands](docs/commands.md): setup, `--ardy` / `--kimodo`, GPU selection,
   learned control, resume and video rendering.
 - [Frozen-model integration](docs/baseline.md): assets, adapters, SONIC and
@@ -38,7 +40,7 @@ Generator selection and learned control are separate choices:
 | Execution system | Generator | Learned controller | Evidence |
 | --- | --- | --- | --- |
 | B0 | Frozen ARDY-G1-RP-25FPS-Horizon8 | None | Shared nominal baseline |
-| K0 | Frozen Kimodo-G1-RP-v1 (`--kimodo`) | None | Exploratory second motion generator |
+| K0 | Frozen Kimodo-G1-RP-v1 (`--kimodo`) | None | Shared 100-scene generator comparison |
 | P | Frozen ARDY (`--ardy`) | Frozen trained Risk + Residual + validation gate | Integrated in batch/manual execution |
 
 P currently requires ARDY. Its checkpoints were trained on the ARDY data
@@ -121,8 +123,10 @@ losses, trial outcomes, videos and selected-checkpoint manifests in the
 corresponding ignored output artifacts. The implementation supports controlled
 teacher pairs and shared execution; it does not establish general recovery
 from arbitrary natural failures or a complete comparison of all risk
-interfaces. Kimodo integration also needs a fair repeated-trial comparison
-under the same SONIC task conditions before a generator ranking is claimed.
+interfaces. The [report](https://github.com/Peneplain/dl/tree/main/docs/report) documents
+the shared 100-scene generator comparison and an independent paired evaluation
+of the selected ARDY-based learned controller, with separate cohorts and
+reported uncertainty.
 
 ## Quick start on the S4000 host
 

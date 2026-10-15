@@ -1,0 +1,35 @@
+{
+  "schema": "report-horizontal-architecture-v2",
+  "new_physics": false,
+  "new_inference": false,
+  "new_training": false,
+  "source_script": "scripts/draw_horizontal_architecture.py",
+  "source_script_sha256": "6fbddebb1541891405553293644ef21de11833cb1ddb6737d22f831531d5deca",
+  "size_inches": [
+    10.5,
+    3.5
+  ],
+  "topology_authority": "Repository README Architecture mermaid and preserved deployed controller source.",
+  "controller_source_pins": {
+    "risk_residual/models.py": "4e6ade62904e781818115bcb43ff4882c48e6f4984f9046618b561b1d74d922c",
+    "risk_residual/runtime.py": "d08b602d305c1e674f2ea9e69d03228004953409737e9d1c3aad4f2e857e2278",
+    "baseline/reference_checks.py": "5567c40c88b635e20eba27eb2c50838e3f6117b1703f9a43c27a2a254d07ad6b"
+  },
+  "core_interface": "Complete predicted body-by-future-time Z directly conditions Residual through projected additive future-token conditioning.",
+  "nominal_input": "Uncorrected future A branches upstream of SONIC into both Risk and Residual.",
+  "history_input": "Measured execution history S enters both Risk and Residual.",
+  "gate": "The scalar p schedules Residual calls; both selective and always-on preserve Risk and full Z. Low gate requests zero.",
+  "shared_filter": "Arm mask, nominal-relative joint feasibility, magnitude and slew limits precede A + delta and frozen SONIC. No extra learned or low-pass filter is depicted.",
+  "finger_control": "Shared task-driven articulated-finger control bypasses the body reference/SONIC path.",
+  "source_context": "Phase/finger context C is described in the manuscript and omitted from the concise diagram, matching README topology.",
+  "future_work_only": "No GR00T or real-robot deployment is depicted.",
+  "grid": "Schematic four body groups by eight future slots, with no activation values represented.",
+  "outputs": {
+    "figures/architecture.pdf": "b9fd9a3bbbe8218da35a4fc6d7e9d67135ead6338d65154f0c4d89ffb665580e",
+    "figures/risk_residual_architecture.pdf": "b9fd9a3bbbe8218da35a4fc6d7e9d67135ead6338d65154f0c4d89ffb665580e",
+    "figures/architecture.png": "f77d9f3bfeb0e8145c42b7e653663d01b534e6c4f9c311d4578a1ff7836e41dd",
+    "figures/risk_residual_architecture.png": "f77d9f3bfeb0e8145c42b7e653663d01b534e6c4f9c311d4578a1ff7836e41dd",
+    "figures/architecture.svg": "2978bdbefa8bb86f2afc91be0396573169a20d0061d1e00a15388a93d8f7e21e",
+    "figures/risk_residual_architecture.svg": "2978bdbefa8bb86f2afc91be0396573169a20d0061d1e00a15388a93d8f7e21e"
+  }
+}
