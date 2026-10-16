@@ -170,8 +170,7 @@ class BaselineBringupTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         linked_docs = {
             "docs/baseline.md", "docs/commands.md", "docs/grasp.md",
-            "docs/learning.md", "docs/project_context.md",
-            "docs/track4_requirements.md", "docs/verification.md",
+            "docs/learning.md", "docs/verification.md",
             "docs/proposal.tex",
         }
         for scope in ("b0", "kimodo"):

@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /workspace/dl
-COPY requirements-musa.txt /tmp/requirements-musa.txt
+COPY requirements/requirements-musa.txt /tmp/requirements-musa.txt
 RUN python -m pip install --no-cache-dir -r /tmp/requirements-musa.txt
 
 # Build with --target gui to add software GLX and the virtual VNC desktop.

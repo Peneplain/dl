@@ -63,4 +63,7 @@ class LocalTextEncoder:
 def check_transformers_version():
     installed = version("transformers")
     if installed != "5.8.1":
-        raise RuntimeError(f"Expected transformers==5.8.1, got {installed}; reinstall requirements-baseline.txt")
+        raise RuntimeError(
+            f"Expected transformers==5.8.1, got {installed}; "
+            "reinstall requirements/requirements-baseline.txt"
+        )

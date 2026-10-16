@@ -4,6 +4,12 @@ Run `./run.sh` from the repository on the S4000 **host**, outside the container.
 It reuses the vendor MUSA stack, `.venv-baseline-musa` and the rendering image.
 Use fresh output directories for every new experiment.
 
+The course server checkout is `/home/group3/dl`. Its `output/` directory resolves
+to `/data/group3/dl-output/`; preserve the symlink and its original artifacts.
+Keep model assets, upstream checkouts, credentials and bulk run outputs outside
+Git. Published manuscript assets are under `report/`, curated demonstrations
+under `videos/`, and numerical summaries under `docs/results/`.
+
 ## Select ARDY or Kimodo
 
 `--ardy` and `--kimodo` are mutually exclusive generator selectors. ARDY remains
@@ -171,6 +177,11 @@ Reuse the existing environment on an installed server:
 ./run.sh manual --help
 ./run.sh render --help
 ```
+
+Dependency lists live in [`requirements/`](../requirements/). The container
+installer combines the S4000, baseline and SONIC lists while preserving the vendor
+PyTorch stack. `requirements/requirements-cpu.txt` is for a separate local CPU
+environment.
 
 For an initial installation:
 

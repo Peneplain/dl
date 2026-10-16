@@ -12,7 +12,10 @@ Pin frozen ARDY/Kimodo sources and checkpoints plus the matching SONIC
 encoder, decoder and configuration. A learned bundle also binds the tensor
 schema, dataset manifest/window hashes, Risk/Residual architecture, normalizer
 and gate calibration. Keep source archives within their declared packaging
-scope. Do not commit weights, datasets, recorded rollouts, videos or credentials.
+scope. Keep weights, bulk datasets, raw rollouts and credentials outside Git.
+Publish manuscript assets under `report/`, curated demonstrations under
+`videos/`, and numerical summaries under `docs/results/`, preserving the relevant
+source and video manifests.
 
 The canonical loader verifies the frozen Risk hash used by Residual, shared
 data/configuration and normalizer tensors. It accepts the gate's recorded raw
@@ -80,15 +83,24 @@ archive transfer leaves remote job/archive status unknown until a later exact
 receipt establishes it. Verify archive contents and native artifact hashes
 before claiming a reproducible package has been delivered.
 
-## Remaining comparison and submission evidence
+## Reported experiments and remaining scope
 
-Reusable controls do not establish the proposal's full risk-interface,
-component/loss and multiple-training-seed comparisons. Course submission also
-requires comparable trials for two distinct generators, response/correction
-metrics, representative successes and failures, Archon workflow evidence and
-an accessible public implementation. Report unfinished work explicitly.
+The [course report](https://github.com/Peneplain/dl/tree/main/report) documents
+the shared 100-scene ARDY/Kimodo comparison, an independent paired ARDY-based
+controller confirmation, and a separate same-weight invocation study.
+[Numerical summaries](https://github.com/Peneplain/dl/tree/main/docs/results)
+provide the response and correction metrics with source provenance;
+[demonstration videos](https://github.com/Peneplain/dl/tree/main/videos) show
+representative successes and failures. The report also describes the Archon
+workflow. Keep these cohorts and their endpoint definitions distinct.
 
-Keep the approved proposal frozen, describe capability changes in the concise
-[project context](project_context.md), and preserve experimental results in
-artifact records and the final report. Acknowledge external models, code,
-datasets and LLM assistance according to the course policy.
+The full risk-interface, component/loss and multiple-training-seed comparisons
+remain separate from the completed invocation study. Source controls alone do
+not establish those experiments. Camera perception, hardware deployment,
+bimanual transport, joint fine-tuning and a LeRobot data export remain outside
+the reported implementation.
+
+Keep the approved proposal frozen, describe implementation changes in
+[README.md](../README.md) and the relevant existing documents, and preserve
+experimental results in their original artifact records. Acknowledge external
+models, code, datasets and LLM assistance according to the course policy.

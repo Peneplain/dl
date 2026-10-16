@@ -17,7 +17,10 @@ class TextEncoderTests(unittest.TestCase):
     def setUpClass(cls):
         for name in ("torch", "transformers", "peft", "hydra", "vector_quantize_pytorch"):
             if importlib.util.find_spec(name) is None:
-                raise unittest.SkipTest(f"Install requirements-baseline.txt for text integration tests ({name})")
+                raise unittest.SkipTest(
+                    "Install requirements/requirements-baseline.txt "
+                    f"for text integration tests ({name})"
+                )
         source = ROOT / "third_party/ardy"
         if not source.is_dir():
             raise unittest.SkipTest("Pinned ARDY source is needed for text integration tests")

@@ -10,18 +10,19 @@ without changing recorded results or provenance.
 
 # Project specification
 
-At the start of a new chat in this repository, read `docs/project_context.md`
-for the current implementation summary, then inspect Git status and task-relevant
-files. Keep that summary concise and current after material changes. Describe
-verified capabilities and remaining work; do not append dated progress logs,
-chat handoffs or commit-by-commit narratives. Keep secrets and raw chat
-transcripts out of project documentation.
+At the start of a new chat in this repository, read `README.md` for the
+current implementation summary, then inspect Git status and task-relevant
+files. Keep implementation details in the relevant existing documents under
+`docs/`. Describe verified capabilities and remaining work; do not append dated
+progress logs, chat handoffs or commit-by-commit narratives. Keep secrets and
+raw chat transcripts out of project documentation.
 
-`docs/proposal.tex` is the source of truth for research scope, architecture,
-training and evaluation. `README.md` explains that design and the current
-implementation; keep it consistent with the proposal. Distinguish planned
-components from implemented and verified behavior. Record agreed design changes
-in the relevant documents instead of silently changing the experiment.
+`docs/proposal.tex` records the approved original research design. `README.md`
+and the task-specific documents describe the current implementation. `report/`
+contains the manuscript assets, `videos/` contains curated demonstrations, and
+`docs/results/` records numerical summaries and source provenance. Distinguish
+planned components from implemented and verified behavior. Record agreed design changes in the
+relevant documents instead of silently changing the experiment.
 
 `docs/proposal.tex` is user-frozen at its original approved version. Do not
 edit, reformat, or append implementation notes to it. Keep implementation
@@ -30,12 +31,13 @@ and the other documents. Only an explicit user request to revise the proposal
 permits changing it or its integrity test.
 
 The project studies text-driven tabletop block grasping with a simulated
-Unitree G1. Compare one frozen ARDY–SONIC baseline (B0) with the same system
-augmented by predictive Risk + Residual correction (P), followed by the
-proposal's controls and ablations. All task data, evaluation and demonstrations
-come from simulation. Supervised correction is the core learning approach;
-reinforcement learning, real hardware, camera perception and the proposal's
-future VLA directions are outside the core study.
+Unitree G1. It compares frozen ARDY and Kimodo through shared SONIC control,
+and separately evaluates ARDY–SONIC (B0) with predictive Risk + Residual
+correction (P). The report distinguishes the generator benchmark, independent
+controller confirmation and same-weight invocation study. All task data,
+evaluation and demonstrations come from simulation. Supervised correction is
+the core learning approach; reinforcement learning, real hardware, camera
+perception and future VLA directions remain outside the implemented study.
 
 # Architecture and control
 
@@ -54,8 +56,8 @@ future VLA directions are outside the core study.
   task-phase and planned finger-command context. Residual consumes history,
   nominal references and predicted risk features. Never supply future executed
   states or teacher outputs as inference inputs.
-- Apply the arm mask and correction bounds. At low risk, skip residual inference
-  and request zero offset; ramp any existing offset to zero under the shared
+- Apply the arm mask and correction bounds. In selective mode, low risk skips
+  Residual inference and requests zero offset; ramp any existing offset to zero under the shared
   rate limit. Keep limits, clearance checks and failure stops identical to B0.
 - Use a timestamped buffer for SONIC's 50 Hz target and Risk/Residual's 10–20 Hz
   target. Derive SONIC lookahead from its observation configuration separately
@@ -73,14 +75,17 @@ future VLA directions are outside the core study.
   in separate modules. They may depend on `baseline/`; the dependency must not
   run in the opposite direction. Extend shared interfaces instead of copying
   separate controllers or simulators for each method.
-- Implement the full proposal as work progresses. Do not treat a baseline-only
-  milestone as a permanent restriction on repository contents.
+- Follow the user's authorized task scope. Keep completed implementation and
+  planned proposal extensions distinct; do not treat source availability as
+  evidence that an experiment has been completed.
 - Keep the baseline upload archive limited to its declared baseline files.
   Give later training or experiment releases their own explicit packaging
   scope; adding a module must not silently expand an existing source archive.
-- Keep real weights, rollout data, generated artifacts, local environments and
+- Keep real weights, bulk datasets, raw rollouts, local environments and
   credentials out of Git. Store source, configurations, schemas, tests and
-  reproducible commands; keep large outputs in the ignored artifact locations.
+  reproducible commands. Publish manuscript assets under `report/`, curated
+  demonstrations under `videos/`, and numerical summaries under `docs/results/`.
+  Keep full experiment outputs in ignored artifact locations.
 
 # Data and learning
 

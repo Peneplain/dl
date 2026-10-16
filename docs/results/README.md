@@ -1,6 +1,6 @@
 # Recorded results
 
-The [report](https://github.com/Peneplain/dl/blob/main/docs/report/report.pdf) follows three distinct evaluations: a shared-scene ARDY/Kimodo benchmark, an independent confirmation of the ARDY-based learned controller, and a same-weight intervention-gate ablation. Their cohorts remain separate.
+The [report](https://github.com/Peneplain/dl/blob/main/report/report.pdf) follows three distinct evaluations: a shared-scene ARDY/Kimodo benchmark, an independent confirmation of the ARDY-based learned controller, and a same-weight intervention-gate ablation. Their cohorts remain separate.
 
 ## ARDY versus Kimodo: 100 scenes per method
 
@@ -22,7 +22,7 @@ There are 23 shared successes, 28 shared failures, 32 Kimodo-only successes, and
 
 The clearest aggregate distinction is retention: each method reaches the initial clearance/contact threshold in 58 of its own 100 trials, but ARDY subsequently loses the object in 18 and Kimodo in 3. ARDY records 16 terminal `grasp_lost_after_success` reasons; the remaining two sticky losses terminate with prohibited contact. Equal threshold counts with unequal final success show why the entire lift/hold sequence matters. ARDY's slightly lower joint-tracking RMSE does not ensure better object retention. Kimodo's dominant remaining failure category is missed alignment (28 trials).
 
-Source: [public numerical results](https://github.com/Peneplain/dl/blob/main/docs/report/results/public-results.json), including all 200 trial rows, retention flags and response arrays, with a [source SHA-256 manifest](https://github.com/Peneplain/dl/blob/main/docs/report/results/public-source-manifest.json). The [video supplement](https://github.com/Peneplain/dl/tree/main/docs/report/videos) includes one successful and one failed example from each generator.
+Source: [public numerical results](https://github.com/Peneplain/dl/blob/main/docs/results/public-results.json), including all 200 trial rows, retention flags and response arrays, with a [source SHA-256 manifest](https://github.com/Peneplain/dl/blob/main/docs/results/public-source-manifest.json). The [video supplement](https://github.com/Peneplain/dl/tree/main/videos) includes one successful and one failed example from each generator.
 
 ## Risk-guided residual controller: independent confirmation
 
@@ -40,7 +40,7 @@ Four scheduled origins have common nominal-reference rejection, leaving both sco
 
 This is evidence of improvement over the paired ARDY baseline under the recorded hybrid protocol. The 59.68% controller result and Kimodo's 55% generator result come from different cohorts and do not establish a controller-versus-Kimodo ranking.
 
-The [public confirmation summary](https://github.com/Peneplain/dl/blob/main/docs/report/results/public-results.json) includes all scheduled-origin rows and the recorded inferential results. The [source manifest](https://github.com/Peneplain/dl/blob/main/docs/report/results/public-source-manifest.json) identifies original report bytes by SHA-256. Full original archives remain preserved separately; the public JSON is a derived numerical view.
+The [public confirmation summary](https://github.com/Peneplain/dl/blob/main/docs/results/public-results.json) includes all scheduled-origin rows and the recorded inferential results. The [source manifest](https://github.com/Peneplain/dl/blob/main/docs/results/public-source-manifest.json) identifies original report bytes by SHA-256. Full original archives remain preserved separately; the public JSON is a derived numerical view.
 
 ## Training and implemented models
 
@@ -61,7 +61,7 @@ Both Risk and Residual use temporal Transformer encoders with **2 layers, width 
 
 The Residual TRAIN view contains 1,055 verified-correction windows, 311,945 causal teacher behavior-cloning windows, and 176,888 stable-identity windows. Overlapping windows are training samples; they are not independent grasp trials. Residual uses predicted tokens from its matching frozen Risk model. The normalization statistics are fitted on Risk TRAIN nominal inputs.
 
-Learned updates run at 10 Hz, execution/state recording at 50 Hz, and physics/task evaluation at 200 Hz. Requested offsets use a tanh output; the shared limiter preserves the 0.15 rad magnitude and 0.5 rad/s rate limits. The complete recorded epoch curves appear in [learning-curves.pdf](https://github.com/Peneplain/dl/blob/main/docs/report/figures/learning-curves.pdf). These supervised objectives use different units and are not grasp-success probabilities.
+Learned updates run at 10 Hz, execution/state recording at 50 Hz, and physics/task evaluation at 200 Hz. Requested offsets use a tanh output; the shared limiter preserves the 0.15 rad magnitude and 0.5 rad/s rate limits. The complete recorded epoch curves appear in [learning-curves.pdf](https://github.com/Peneplain/dl/blob/main/report/figures/learning-curves.pdf). These supervised objectives use different units and are not grasp-success probabilities.
 
 ## Structured Risk-conditioned control: invocation study
 
@@ -80,10 +80,10 @@ Selective invocation skips **62.25%** of Residual forward calls on its own decis
 
 The timing scope covers recorded learned-controller preparation and model work on each arm's evolving trajectory. It does not measure generator latency, total simulation throughput, or energy. The ablation is descriptive and has no additional significance test.
 
-Sources: [public invocation and efficiency results](https://github.com/Peneplain/dl/blob/main/docs/report/results/public-results.json), the [ablation chart](https://github.com/Peneplain/dl/blob/main/docs/report/figures/gating.pdf), and the [source SHA-256 manifest](https://github.com/Peneplain/dl/blob/main/docs/report/results/public-source-manifest.json).
+Sources: [public invocation and efficiency results](https://github.com/Peneplain/dl/blob/main/docs/results/public-results.json), the [ablation chart](https://github.com/Peneplain/dl/blob/main/report/figures/gating.pdf), and the [source SHA-256 manifest](https://github.com/Peneplain/dl/blob/main/docs/results/public-source-manifest.json).
 
 ## Videos and reproducibility
 
-The [video supplement](https://github.com/Peneplain/dl/tree/main/docs/report/videos) presents matched scene views and generator examples with text instructions, stage, simulation time, and method labels. Success, failure, recovery, and harmful correction are all represented. Presentation copies use clear method names; original clip bytes and source hashes are preserved in the package's provenance.
+The [video supplement](https://github.com/Peneplain/dl/tree/main/videos) presents matched scene views and generator examples with text instructions, stage, simulation time, and method labels. Success, failure, recovery, and harmful correction are all represented. Presentation copies use clear method names; original clip bytes and source hashes are preserved in the package's provenance.
 
-Use the [README](https://github.com/Peneplain/dl/blob/main/docs/report/README.md) for LaTeX compilation, figures, and public supplementary material.
+Use the [repository README](https://github.com/Peneplain/dl#edit-the-report-in-overleaf) for Overleaf compilation and the report/video layout.

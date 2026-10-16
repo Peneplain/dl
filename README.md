@@ -11,8 +11,12 @@ state.
 
 ## Start here
 
-- [Course report and supplement](https://github.com/Peneplain/dl/tree/main/docs/report):
-  ICRA-format manuscript, numerical results, and 22 annotated demonstration videos.
+- [Course report](https://github.com/Peneplain/dl/tree/main/report): ICRA-format
+  PDF and standalone Overleaf source.
+- [Demonstration videos](https://github.com/Peneplain/dl/tree/main/videos):
+  22 annotated success, failure and paired-controller videos.
+- [Numerical results](https://github.com/Peneplain/dl/tree/main/docs/results):
+  benchmark, confirmation, training and invocation-study summaries.
 - [Commands](docs/commands.md): setup, `--ardy` / `--kimodo`, GPU selection,
   learned control, resume and video rendering.
 - [Frozen-model integration](docs/baseline.md): assets, adapters, SONIC and
@@ -23,8 +27,6 @@ state.
   tensor contracts, training and checkpoint provenance.
 - [Verification guide](docs/verification.md): source and checkpoint compatibility,
   evidence boundaries and physical-trial accounting.
-- [Submission requirements](docs/track4_requirements.md).
-- [Current project context](docs/project_context.md).
 
 The [research proposal](docs/proposal.tex) is the approved, frozen source for
 research scope. Implementation status is documented separately. GR00T N1.7,
@@ -41,7 +43,7 @@ Generator selection and learned control are separate choices:
 | --- | --- | --- | --- |
 | B0 | Frozen ARDY-G1-RP-25FPS-Horizon8 | None | Shared nominal baseline |
 | K0 | Frozen Kimodo-G1-RP-v1 (`--kimodo`) | None | Shared 100-scene generator comparison |
-| P | Frozen ARDY (`--ardy`) | Frozen trained Risk + Residual + validation gate | Integrated in batch/manual execution |
+| P | Frozen ARDY (`--ardy`) | Matched trained Risk + Residual and declared gate settings | Integrated in batch/manual execution |
 
 P currently requires ARDY. Its checkpoints were trained on the ARDY data
 interface, so Kimodo cannot be combined with these learned artifacts. Kimodo
@@ -78,7 +80,7 @@ flowchart TB
     A --> R[Predictive Risk Transformer]
     G[G1 in MuJoCo] -. Execution history .-> R
     R --> Z[8 x 4 x 32 structured risk tokens + intervention score]
-    Z --> V[Validation-calibrated gate]
+    Z --> V[Declared intervention gate]
     V -->|High risk| P[Residual Transformer]
     Z --> P
     A --> P
@@ -94,8 +96,10 @@ flowchart TB
 Risk uses 300 ms of execution history and a 280 ms nominal future. It predicts
 tracking, contact, balance and intervention information. Residual reads the
 predicted representation and changes only the 14 arm-reference coordinates.
-Root, torso, legs and fingers remain under the common nominal system. At low
-risk, residual inference is skipped and any existing offset ramps to zero.
+Root, torso, legs and fingers remain under the common nominal system. In
+selective mode, low risk skips Residual inference and any existing offset ramps
+to zero. Always-on mode retains Risk inference and the full predicted tokens,
+while invoking Residual at every learned-controller decision.
 
 Physics runs at 200 Hz, SONIC references at 50 Hz, and Risk/Residual updates at
 10–20 Hz. Correction bounds, rate limits, physical stops, the scene and success
@@ -119,11 +123,13 @@ loader does not establish compatibility.
 
 Training completion, synthetic checks, full-model execution and admitted
 physical results are separate kinds of evidence. Keep exact dataset sizes,
-losses, trial outcomes, videos and selected-checkpoint manifests in the
-corresponding ignored output artifacts. The implementation supports controlled
-teacher pairs and shared execution; it does not establish general recovery
-from arbitrary natural failures or a complete comparison of all risk
-interfaces. The [report](https://github.com/Peneplain/dl/tree/main/docs/report) documents
+losses, trial outcomes and selected-checkpoint manifests in the corresponding
+original output artifacts. The `report/` directory contains manuscript assets,
+`videos/` contains curated demonstrations, and `docs/results/` contains numerical
+summaries and source provenance. The implementation supports controlled teacher
+pairs and shared execution; it does not establish general recovery from
+arbitrary natural failures or a complete comparison of all risk interfaces.
+The [report](https://github.com/Peneplain/dl/tree/main/report) documents
 the shared 100-scene generator comparison and an independent paired evaluation
 of the selected ARDY-based learned controller, with separate cohorts and
 reported uncertainty.
@@ -142,6 +148,15 @@ Each batch uses a fresh timestamped directory. Render only selected attempts
 when raw RGB storage is limited. [Commands](docs/commands.md) includes the
 matched checkpoint set for P and the offline asset-transfer procedure.
 
+## Edit the report in Overleaf
+
+Upload the contents of `report/` as an Overleaf project, select `main.tex` as
+the main document, and use the pdfLaTeX compiler. The project contains a single
+TeX source with its figures, bibliography and conference class. References use
+BibTeX with the standard `IEEEtran` bibliography style supplied by the TeX
+distribution. Videos and numerical result files remain in their separate
+repository directories.
+
 ## Repository layout
 
 ```text
@@ -150,9 +165,12 @@ risk_residual/      Models, losses, causal dataset, provenance and inference
 experiments/        Data planning, teacher collection, training and evaluation
 scripts/            Host workflows, asset tools, rendering and guarded pipelines
 configs/            Source/model locks, prompts and learning/data configurations
+requirements/       CPU and S4000 dependency lists for models and simulation
 docker/             Vendor MUSA container launcher and rendering/GUI support
 tests/              Contracts, regression checks and physical/rendering probes
-docs/               Setup, task, learning, verification guide and frozen proposal
+docs/               Setup, learning, verification, numerical results and frozen proposal
+report/             Standalone Overleaf manuscript, figures and compiled report
+videos/             Curated annotated demonstrations and video manifest
 checkpoints/        Local model assets and manifests (ignored)
 third_party/        Pinned upstream checkouts (ignored)
 output/             Datasets, checkpoints, trials and rendered videos (ignored)

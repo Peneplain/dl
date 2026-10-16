@@ -9,10 +9,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TOP_FILES = {"AGENTS.md", "README.md", "run.sh", "Dockerfile.musa", ".gitignore", ".dockerignore",
-             "pyproject.toml", "requirements-musa.txt", "requirements-cpu.txt",
-             "requirements-baseline.txt", "requirements-sonic-sim.txt", "configs/baseline.lock.json",
+             "pyproject.toml", "requirements/requirements-musa.txt", "requirements/requirements-cpu.txt",
+             "requirements/requirements-baseline.txt", "requirements/requirements-sonic-sim.txt",
+             "configs/baseline.lock.json",
              "docs/baseline.md", "docs/commands.md", "docs/grasp.md", "docs/learning.md",
-             "docs/project_context.md", "docs/track4_requirements.md",
              "configs/grasp-prompts.json", "docs/verification.md",
              "docs/proposal.tex", "scripts/check_backend.py", "scripts/check_baseline.py", "scripts/check_sonic_onnx.py",
              "scripts/fetch_baseline.py", "scripts/install_baseline.sh",

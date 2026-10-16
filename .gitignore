@@ -32,6 +32,22 @@ wandb/
 /artifacts/
 /output
 
-# Local videos and temporary experiment logs are not source releases.
-/videos/
+# Publish only the curated demonstration folders and their index files.
+/videos/*
+!/videos/README.md
+!/videos/manifest.json
+!/videos/clips/
+!/videos/baseline100/
 /tmp/
+
+# Local LaTeX compilation intermediates; the final report.pdf is published.
+/report/build/
+/report/*.aux
+/report/*.bbl
+/report/*.blg
+/report/*.fdb_latexmk
+/report/*.fls
+/report/*.log
+/report/*.out
+/report/*.synctex.gz
+/report/main.pdf

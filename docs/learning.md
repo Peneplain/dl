@@ -3,8 +3,12 @@
 The learning package adds predictive correction to the frozen ARDY + SONIC
 simulation workflow. Training and deployment use separate stages: train Risk,
 freeze it, then train Residual with predicted Risk features. Joint fine-tuning
-is deferred. Keep per-run results, selected-artifact paths and measured counts
-in ignored output artifacts; this page documents reproducible semantics.
+is deferred. This page documents the reusable learning interfaces; the
+[course report](https://github.com/Peneplain/dl/tree/main/report) records the
+selected native training, data counts, checkpoint selection and physical
+evaluation. [Numerical summaries](https://github.com/Peneplain/dl/tree/main/docs/results)
+retain the public results and source provenance. Preserve complete per-run results
+and selected-artifact provenance in their original output artifacts.
 
 ## Package boundaries
 
@@ -174,8 +178,11 @@ it is not additional data or an equal-compute comparison.
 Risk-interface adapters preserve the same body/time feature slots and decoder
 capacity. Binary-gate, scalar, body-wise, time-wise and learned-token interfaces
 need matched training/data/gate protocols before their outcomes are compared.
-The no-gate control reuses the trained networks without retraining. Available
-source interfaces are not completed ablation results.
+The no-gate control reuses the trained networks without retraining: Risk still
+runs and Residual receives its full predicted token tensor. The report's
+invocation study shares weights between its selective and always-on arms; its
+checkpoints and cohort are distinct from the independent confirmation.
+Available source interfaces are not completed ablation results.
 
 ## Runtime and portability
 
